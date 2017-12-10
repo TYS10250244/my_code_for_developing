@@ -41,8 +41,7 @@ PFC_Min_Look_back = 60
 """
 set_bounds = (0.00, 1.0)
 
-ret_data = pd.read_csv(Data_direct+"Return_Data_for_DL.csv",index_col=0)
-buket_factor = pd.read_csv(Data_direct+"For_DL_Index.csv",index_col=0)
+ret_data = pd.read_csv(Data_direct+"*****.csv",index_col=0)
 
 ret_data.index = pd.to_datetime(ret_data.index)
 base_return = ret_data.resample("M",how='last')
