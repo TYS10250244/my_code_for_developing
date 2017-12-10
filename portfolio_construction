@@ -1,0 +1,207 @@
+# -*- coding: utf-8 -*-
+# %matplotlib inline
+import pandas as pd
+import pyfolio.plotting as plotting
+import pyfolio.timeseries as timeseries
+import matplotlib.pyplot as plt
+from pandas.tools.plotting import table
+import seaborn as sns 
+from sklearn.decomposition import PCA
+import warnings;warnings.filterwarnings('ignore')
+
+from pandas import Series, DataFrame
+
+from scipy.optimize import minimize
+from scipy.cluster.hierarchy import ward, dendrogram
+
+Data_direct = "************************************************"
+
+"""
+For Return Adjust
+"""
+Look_back = 36
+Min_Look_back = 12
+target_vol = 0.04
+
+"""
+For Long term
+"""
+LongCorr_Look_back = 120
+LongCorr_Min_Look_back = 60
+
+"""
+For portforio construction
+"""
+PFC_Look_back = 120
+PFC_Min_Look_back = 60
+
+
+"""
+ bounds for portforio construction
+"""
+set_bounds = (0.00, 1.0)
+
+ret_data = pd.read_csv(Data_direct+"Return_Data_for_DL.csv",index_col=0)
+buket_factor = pd.read_csv(Data_direct+"For_DL_Index.csv",index_col=0)
+
+ret_data.index = pd.to_datetime(ret_data.index)
+base_return = ret_data.resample("M",how='last')
+# 
+M_std = pd.rolling_std(base_return ,window=Look_back,min_periods=Min_Look_back)
+adj_ret = (target_vol * base_return /(M_std*sqrt(12))).dropna(axis=0)
+
+adj_ret =base_return.copy()
+
+def Calc_Pairwise_Corr(input_ret_M):
+    Rolling_corr = pd.rolling_corr(input_ret_M,window=LongCorr_Look_back,min_periods=LongCorr_Min_Look_back) 
+    tmp = Rolling_corr.apply(lambda x: np.fill_diagonal(x.values, None), axis=(1,2)) 
+    apc = Rolling_corr.apply(lambda x: x.unstack().mean(skipna=True), axis=(1,2))
+    return apc
+
+
+# def adj_return(input_ret_M):
+#     input_ret_M.index = pd.to_datetime(input_ret_M.index)
+#     M_ret = input_ret_M.resample("M",how='last')
+#     rets = M_ret.copy()
+#     return rets
+
+def RC(weight, covmat) :
+    weight = np.array(weight)
+    variance = weight.T @ covmat @ weight
+    sigma = variance ** 0.5
+    mrc = 1/sigma * (covmat @ weight)
+    rc = weight * mrc
+    rc = rc / rc.sum()
+    return(rc)
+    
+def RiskParity_objective(x) :
+    variance = x.T @ covmat @ x
+    sigma = variance ** 0.5
+    mrc = 1/sigma * (covmat @ x)
+    rc = x * mrc
+    a = np.reshape(rc, (len(rc), 1))
+    risk_diffs = a - a.T
+    sum_risk_diffs_squared = np.sum(np.square(np.ravel(risk_diffs)))
+    return (sum_risk_diffs_squared)    
+
+        
+def Minimum_variance(x) :
+    variance = x.T @ covmat @ x
+    risk = variance 
+    return (risk)                  
+                        
+                                        
+def weight_sum_constraint(x) :
+    return(x.sum() - 1.0 )
+
+
+def weight_longonly(x) :
+    return(x)
+
+def RiskParity(covmat) :
+    
+    x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 800}
+    result = minimize(fun = RiskParity_objective,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)                     
+
+
+def MinimumVariance(covmat) :
+    global bounds
+    x0 = np.repeat(0, covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 10000}
+    result = minimize(fun = Minimum_variance,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      bounds = bounds,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)     
+
+
+
+
+covmat = pd.DataFrame()
+def calc_historical_RP_weight(df_ret,lookbak,min_lookbak):
+    global covmat
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].index:
+    # for d in df_ret.index:
+
+        # print('*----------------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        covmat = DataFrame.cov(ret0)
+        # print(covmat)            
+         
+        result_weight[d] = RiskParity(covmat)
+        # print(RiskParity(covmat)) 
+        
+    return result_weight
+
+
+covmat = pd.DataFrame()
+def calc_historical_MV_weight(df_ret,lookbak,min_lookbak):
+    global covmat, bounds
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].index:
+    # for d in df_ret.index:
+
+        # print('*----------------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        covmat = DataFrame.cov(ret0)
+        # print(covmat)            
+         
+        result_weight[d] = MinimumVariance(covmat)
+        # print(MinimumVariance(covmat)) 
+        
+    return result_weight
+    
+    
+
+def calc_historical_InvVol_weight(df_ret,lookbak,min_lookbak):
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].index:
+
+        # print('*----------------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        Inv_vol = 1/np.std(ret0)
+        result_weight[d] = Inv_vol/np.sum(Inv_vol,axis=0)
+        
+    return result_weight
+    
+    
+H_MV_weight = calc_historical_MV_weight(factor_index,PFC_Look_back,PFC_Min_Look_back)
+DF_MV_weight = pd.DataFrame.from_dict(H_MV_weight).transpose()
+DF_MV_weight.columns = factor_index.columns 
+
+H_ERC_weight = calc_historical_RP_weight(factor_index,PFC_Look_back,PFC_Min_Look_back)
+DF_ERC_weight = pd.DataFrame.from_dict(H_ERC_weight).transpose()
+DF_ERC_weight.columns = factor_index.columns 
+    
+H_InvVol_weight = calc_historical_InvVol_weight(factor_index,PFC_Look_back,PFC_Min_Look_back)
+DF_InvVol_weight = pd.DataFrame.from_dict(H_InvVol_weight).transpose()
+DF_InvVol_weight.columns = factor_index.columns 
+
+RP_ret_MV = pd.DataFrame(np.sum((factor_index*DF_MV_weight.shift(1)).dropna(axis=0),axis=1))
+RP_ret_MV.columns = ['Minimum_Vol']
+
+RP_ret_ERC = pd.DataFrame(np.sum((factor_index*DF_ERC_weight.shift(1)).dropna(axis=0),axis=1))
+RP_ret_ERC.columns = ['Equal_Risk_Contribution']
+    
+RP_ret_InvVol = pd.DataFrame(np.sum((factor_index*DF_InvVol_weight.shift(1)).dropna(axis=0),axis=1))
+RP_ret_InvVol.columns = ['Inverse_Vol']
+    
+Portfolio_return = pd.concat([RP_ret_MV,RP_ret_ERC,RP_ret_InvVol],axis=1).dropna()
