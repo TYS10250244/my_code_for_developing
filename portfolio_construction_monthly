@@ -239,7 +239,6 @@ def calc_historical_max_sharpe_weight_SMA(df_ret,lookbak,min_lookbak,input_Look_
     for d in df_ret[min_lookbak:].index:
         # print('*----------------------------'+str(d)+'*----------------------------')        
         ret0 = df_ret[:d][-1*lookbak:]
-        # print(ret0) 
         covmat = DataFrame.cov(ret0)
         expcted_ret = Expected_return_SMA(df_ret[:d],input_Look_back_for_Expected_ret,input_min_Look_back_for_Expected_ret)[-1:].fillna(0)
         print(expcted_ret)  
@@ -308,8 +307,7 @@ def out_performacne(DF_Base_data):
 Portfolio Construction
 """   
         
-for buket in buket_factor[buket_factor['Bucket']!='Hedge']['Bucket'].drop_duplicates():
-    # buket = 'Carry'
+for buket in tmp.drop_duplicates():
     print('------------------------Buket:'+str(buket)+'---------------------------------------------')
     factor_index = adj_ret[buket_factor[buket_factor['Bucket']==buket]['Factor']]                   
     pairwise_corr = pd.DataFrame(Calc_Pairwise_Corr(factor_index)).dropna(axis=0)
@@ -363,8 +361,6 @@ for buket in buket_factor[buket_factor['Bucket']!='Hedge']['Bucket'].drop_duplic
 factor_index = adj_ret.copy()
 
 bounds = [set_bounds for i in factor_index.columns]
-bounds[8] = bounds_for_hedge
-
 
 H_MV_weight = calc_historical_MV_weight(factor_index,input_Look_back,input_Min_Look_back)
 DF_MV_weight = pd.DataFrame.from_dict(H_MV_weight).transpose()
