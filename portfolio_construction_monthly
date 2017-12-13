@@ -112,11 +112,9 @@ def Expected_return_SMA(DF_return,window_for_ER,min_window_for_ER) :
     Exp_ret = pd.rolling_mean(DF_return,window=window_for_ER,min_periods=min_window_for_ER)  
     return(Exp_ret)
 
-def Expected_return_EMA(DF_return,window_for_ER,halflife_for_ER ,min_window_for_ER) :
-    if halflife < min_window_for_ER:
-        halflife = int(min_window_for_ER/2) 
-    Exp_ret = DF_return.rolling(window=window_for_ER,halflife=halflife_for_ER ,min_periods=min_window_for_ER).ewma()
-    return(Exp_ret)
+def Expected_return_EMA1(x, halflife):
+    return pd.DataFrame(x).ewm(halflife=halflife).mean()
+
 
 def Max_sharpe_objdect(x) :
     variance = x.T @ covmat @ x
