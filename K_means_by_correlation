@@ -1,0 +1,31 @@
+# -*- coding: utf-8 -*-
+from sklearn.cluster import KMeans
+import pandas as pd
+import matplotlib.pyplot as plt
+
+def K_means(DF_input_data,obj_1,obj_2,N_CLUSTERS):
+
+    N_CLUSTERS = N_CLUSTERS
+
+    dataset = DF_input_data.corr()[[obj_1,obj_2]]
+    features = dataset
+
+    cls = KMeans(n_clusters=N_CLUSTERS)
+    pred = cls.fit_predict(features)
+
+    fig, ax = plt.subplots(figsize=(12,12), dpi=80)
+
+    for i in range(N_CLUSTERS):
+        labels = features[pred == i]
+
+        plt.scatter(labels.iloc[:, 0], labels.iloc[:, 1],s=80)
+
+    for k, v in dataset.iterrows():
+             ax.annotate(k,xy=(v[0],v[1]),size=8)
+        
+    centers = cls.cluster_centers_
+    plt.scatter(centers[:, 0], centers[:, 1], s=100,
+                facecolors='black', edgecolors='black')
+
+    plt.show()
+    return
