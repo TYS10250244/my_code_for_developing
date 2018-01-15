@@ -1,0 +1,921 @@
+# -*- coding: utf-8 -*-
+%matplotlib inline
+import pandas as pd
+import pyfolio.plotting as plotting
+import pyfolio.timeseries as timeseries
+import matplotlib.pyplot as plt
+from pandas.tools.plotting import table
+import seaborn as sns 
+from sklearn.decomposition import PCA
+import warnings;warnings.filterwarnings('ignore')
+from pandas import Series, DataFrame
+from scipy.optimize import minimize
+from scipy.cluster.hierarchy import ward, dendrogram
+from sklearn import  covariance
+
+
+Data_direct = "*******************************\\data\\"
+
+"""
+For Return Adjust
+"""
+Look_back = 250*3
+Min_Look_back = 250
+target_vol = 0.05
+
+"""
+For portforio construction
+"""
+input_Look_back = 250*3
+input_Min_Look_back = 250
+
+
+"""
+ bounds for portforio construction
+"""
+set_bounds = (0.00, 1.0)
+bounds_for_hedge = (0.095, 0.105) # for Hedge
+
+"""
+ Expected return
+"""
+input_Look_back_for_Expected_ret = 250*3
+input_Min_Look_back_for_Expected_ret = 250
+input_halflife_for_ER = 250
+
+"""
+ Selected index
+"""
+num_Selected = 3
+
+"""
+ Trade(T+(x-1))
+"""
+lag_trade = 4
+
+ret_data = pd.read_csv(Data_direct+"Return_Data_for_DL_daily.csv",index_col=0)
+buket_factor = pd.read_csv(Data_direct+"For_DL_Index.csv",index_col=0)
+
+ret_data.index = pd.to_datetime(ret_data.index)
+Index_value=100*((1+ret_data).cumprod())
+Index_value_w = Index_value.resample("D",how='last').dropna(axis=0)
+base_return_W = Index_value_w/Index_value_w.shift(1)-1
+
+comparison_index = pd.read_csv("***************\\comparison_Index_data.csv",index_col=0)
+comparison_index.index = pd.to_datetime(comparison_index.index)
+W_comparison_index = comparison_index.resample("D",how='last').dropna(axis=0)
+W_comparison_index_ret = W_comparison_index/W_comparison_index.shift(1)-1
+
+adj_ret = base_return_W.copy()
+
+G_LassoCV = covariance.GraphLassoCV(cv=5)
+
+def Calc_Pairwise_Corr(input_ret_M):
+    Rolling_corr = pd.rolling_corr(input_ret_M,window=LongCorr_Look_back,\
+                                            min_periods=LongCorr_Min_Look_back) 
+    tmp = Rolling_corr.apply(lambda x: np.fill_diagonal(x.values, None), \
+                                                                     axis=(1,2)) 
+    apc = Rolling_corr.apply(lambda x: x.unstack().mean(skipna=True),\
+                                                                     axis=(1,2))
+    return apc
+
+
+def adj_return(input_ret):
+    input_ret.index = pd.to_datetime(input_ret.index)
+    a_ret = input_ret.copy()
+    rets = target_vol * a_ret/(np.std(a_ret, ddof=1)*np.sqrt(250))
+    return rets
+
+def weight_sum_constraint(x) :
+    return(x.sum() - 1.0 )
+
+
+def weight_longonly(x) :
+    return(x)
+
+def RC(weight, covmat) :
+    weight = np.array(weight)
+    variance = weight.T @ covmat @ weight
+    sigma = variance ** 0.5
+    mrc = 1/sigma * (covmat @ weight)
+    rc = weight * mrc
+    rc = rc / rc.sum()
+    return(rc)
+    
+def RiskParity_objective(x) :
+    variance = x.T @ covmat @ x
+    sigma = variance ** 0.5
+    mrc = 1/sigma * (covmat @ x)
+    rc = x * mrc
+    a = np.reshape(rc, (len(rc), 1))
+    risk_diffs = a - a.T
+    sum_risk_diffs_squared = np.sum(np.square(np.ravel(risk_diffs)))
+    return (sum_risk_diffs_squared)    
+        
+def Minimum_variance(x) :
+    variance = x.T @ covmat @ x
+    risk = variance 
+    return (risk)                  
+
+
+def Expected_return_SMA(DF_return,window_for_ER,min_window_for_ER) :
+    Exp_ret = pd.rolling_mean(DF_return,window=window_for_ER,\
+                                                 min_periods=min_window_for_ER)  
+    return(Exp_ret)
+ 
+def Expected_return_EMA1(x, halflife):
+    return pd.DataFrame(x).ewm(halflife=halflife).mean()
+        
+def Max_sharpe_objdect(x) :
+    variance = x.T @ covmat @ x
+    sigma = variance ** 0.5
+    ret =  expcted_ret @ x 
+    expeted_sharpe = (ret/sigma)[0]  
+    return (-1 * expeted_sharpe)                                                 
+
+def RiskParity(covmat) :
+    
+    x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 800}
+    result = minimize(fun = RiskParity_objective,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)                     
+
+
+def MinimumVariance(covmat) :
+    global bounds
+    x0 = np.repeat(0, covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 10000}
+    result = minimize(fun = Minimum_variance,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      bounds = bounds,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)     
+
+
+def Max_sharpe(covmat, expcted_ret) :
+    global bounds
+    x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 10000}
+    result = minimize(fun = Max_sharpe_objdect,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      bounds = bounds,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)    
+
+
+covmat = pd.DataFrame()
+def calc_historical_RP_weight(df_ret,lookbak,min_lookbak):
+    global covmat
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+    # for d in df_ret.index:
+
+        # print('*--------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        covmat = DataFrame.cov(ret0)
+        # print(covmat)            
+         
+        result_weight[d] = RiskParity(covmat)
+        # print(RiskParity(covmat)) 
+        
+    return result_weight
+
+
+covmat = pd.DataFrame()
+def calc_historical_RP_weight_withL1P(df_ret,lookbak,min_lookbak):
+    global covmat
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+    # for d in df_ret.index:
+
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        G_cov = G_LassoCV.fit(ret0.dropna(axis=0))
+        covmat = pd.DataFrame(G_cov.covariance_) * float((lookbak)/(lookbak-1))  
+        # print(covmat)            
+         
+        result_weight[d] = RiskParity(covmat)
+        # print(RiskParity(covmat)) 
+        
+    return result_weight
+
+
+
+covmat = pd.DataFrame()
+def calc_historical_MV_weight(df_ret,lookbak,min_lookbak):
+    global covmat, bounds
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+    # for d in df_ret.index:
+
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        covmat = DataFrame.cov(ret0)
+        # print(covmat)            
+         
+        result_weight[d] = MinimumVariance(covmat)
+        # print(MinimumVariance(covmat)) 
+        
+    return result_weight
+    
+    
+def calc_historical_InvVol_weight(df_ret,lookbak,min_lookbak):
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        Inv_vol = 1/np.std(ret0)
+        result_weight[d] = Inv_vol/np.sum(Inv_vol,axis=0)
+        
+    return result_weight
+    
+
+covmat = pd.DataFrame()
+expcted_ret = pd.DataFrame()
+def calc_historical_max_sharpe_weight_SMA(df_ret,lookbak,min_lookbak,\
+         input_Look_back_for_Expected_ret,input_min_Look_back_for_Expected_ret):
+    global covmat, expcted_ret, bounds
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        # print(ret0) 
+        covmat = DataFrame.cov(ret0)
+        expcted_ret = Expected_return_SMA(df_ret[:d],\
+                            input_Look_back_for_Expected_ret,\
+                            input_min_Look_back_for_Expected_ret)[-1:].fillna(0)
+        # print(expcted_ret)  
+        # print(covmat)                    
+        result_weight[d] = Max_sharpe(covmat,expcted_ret)
+        # print(result_weight[d]) 
+    return result_weight
+
+
+def Expected_return_EMA1(x, halflife):
+    return pd.DataFrame(x).ewm(halflife=halflife).mean()
+
+
+Expected_ret_EMA = pd.DataFrame()
+for date in adj_ret[input_Min_Look_back_for_Expected_ret:].resample("M").index:
+    ret0 = adj_ret[:date][-1*input_Look_back_for_Expected_ret:]
+    halflife = input_halflife_for_ER
+    if len(ret0.index) < input_halflife_for_ER:
+        halflife = int(len(ret0.index)/2)
+    # print(halflife)    
+    
+    Expected_ret_EMA0 = Expected_return_EMA1(ret0,halflife)[-1:] 
+    Expected_ret_EMA0['date'] = date
+    Expected_ret_EMA  = pd.concat([Expected_ret_EMA ,Expected_ret_EMA0],axis=0) 
+ 
+Expected_ret_EMA.index = Expected_ret_EMA['date']
+Expected_ret_EMA = Expected_ret_EMA.drop('date',axis=1)       
+DF_Expected_ret_EMA = pd.DataFrame.from_dict(Expected_ret_EMA).transpose()    
+
+
+covmat = pd.DataFrame()
+expcted_ret = pd.DataFrame()
+def calc_historical_max_sharpe_weight_EMA(df_ret,lookbak,min_lookbak):
+    global covmat, expcted_ret, bounds
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        # print(ret0) 
+        covmat = DataFrame.cov(ret0)
+        expcted_ret = Expected_ret_EMA[:d][-1:][df_ret.columns]
+        print(expcted_ret)  
+        print(covmat)
+        print(lookbak)                            
+        result_weight[d] = Max_sharpe(covmat,expcted_ret)
+        # print(result_weight[d]) 
+    return result_weight
+
+
+
+# G_cov = G_LassoCV.fit(adj_ret.dropna(axis=0))
+#     
+covmat = pd.DataFrame()
+expcted_ret = pd.DataFrame()
+def calc_historical_max_sharpe_weight_EMAwithL1P(df_ret,lookbak,min_lookbak):
+    global covmat, expcted_ret, bounds
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        # print(ret0) 
+        G_cov = G_LassoCV.fit(ret0.dropna(axis=0))
+        covmat = pd.DataFrame(G_cov.covariance_)* float((lookbak)/(lookbak-1))  
+        expcted_ret = Expected_ret_EMA[:d][-1:][df_ret.columns]
+        print(expcted_ret)  
+        print(covmat)
+        print(lookbak)                            
+        result_weight[d] = Max_sharpe(covmat,expcted_ret)
+        # print(result_weight[d]) 
+    return result_weight        
+            
+                
+                        
+# 
+# df_ret =  adj_ret 
+# d = '2017-09-30'
+# lookbak = 36
+def calc_historical_InvVol_weight_selected(df_ret,lookbak,min_lookbak):
+    result_weight = pd.DataFrame()
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        ret_vol = pd.DataFrame(np.mean(ret0)/np.std(ret0))
+        ret_vol['rank'] = ret_vol.rank(ascending=False)
+        selected_index = ret0[ret_vol[ret_vol['rank'] <=num_Selected].index]
+        Inv_vol = 1/np.std(selected_index)
+        result_weight0 = pd.DataFrame(Inv_vol/np.sum(Inv_vol,axis=0)).transpose()
+        result_weight0['date'] = d
+        result_weight = pd.concat([result_weight,result_weight0],axis=0).fillna(0)
+    result_weight.index = result_weight['date']
+    result_weight = result_weight.drop('date',axis=1)  
+    return result_weight        
+
+def calc_robust_covariance(df_ret,alpha,lookbak,min_lookbak,rbstlookbak,d):
+    print(d)
+    ret0 = df_ret[:d][-1*lookbak:]
+    normal_covmat = DataFrame.cov(ret0)                      
+
+    ret_for_rbst =df_ret[:d][-1*rbstlookbak:]
+    quant = ret_for_rbst.quantile([alpha/2, (1-alpha/2)])
+    q_l = quant.loc[alpha/2,:]
+    q_u = quant.loc[(1-alpha/2),:]
+                        
+                                            
+
+    ret_for_rbst_L = np.sign(ret_for_rbst[ret_for_rbst.\
+                                  apply(lambda x: x-q_l ,axis=1)<0]).fillna(0)
+    ret_for_rbst_U = np.sign(ret_for_rbst[ret_for_rbst.\
+                                  apply(lambda x: x-q_u ,axis=1)>0]).fillna(0)
+    ab_normal_signal = np.abs((ret_for_rbst_L + ret_for_rbst_U)\
+                                         [(ret_for_rbst_L + ret_for_rbst_U)!=0])
+    ab_normal_ret = ret_for_rbst *  ab_normal_signal                                                        
+      
+    normal_signal = ab_normal_signal.copy()
+    normal_signal = np.abs(ab_normal_signal.fillna(0) -1)                                             
+    normal_signal = normal_signal[normal_signal>0]
+
+    normal_ret = ret0 *  normal_signal 
+    rdst_std = np.sqrt(alpha * (np.std(abs(ab_normal_ret),\
+                  ddof=1 ))**2 + (1-alpha) * (np.std(normal_ret, ddof=1 ) )**2)
+
+    covmat = DataFrame.cov(ret0)
+    rbst_covmat = covmat.copy()
+    np.fill_diagonal(rbst_covmat.values, rdst_std**2)
+                                                                                                                                                                                                          
+    return rbst_covmat
+                                                                                                                                                                                                                                                                                                                                                
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        
+
+covmat = pd.DataFrame()
+rbst_covmat = pd.DataFrame()
+expcted_ret = pd.DataFrame()
+def calc_historical_max_sharpe_weight_EMA_robust(df_ret,lookbak,min_lookbak):
+    global covmat, expcted_ret, bounds,d 
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        covmat = calc_robust_covariance(df_ret,0.05,lookbak,min_lookbak,120,d)
+        expcted_ret = Expected_ret_EMA[:d][-1:][df_ret.columns]
+        print(expcted_ret)  
+        print(covmat)
+        print(lookbak)
+        result_weight[d] = Max_sharpe(covmat,expcted_ret)
+        # print(result_weight[d]) 
+    return result_weight
+ 
+                
+    
+"""     
+-----------------------------------------------------------------------------------
+For Output Performance Summary
+-----------------------------------------------------------------------------------
+""" 
+
+def out_performacne(DF_Base_data):
+    ADJ_MF_base =  DF_Base_data.copy()
+
+    Vol_adj_ret = pd.DataFrame(np.std(ADJ_MF_base, ddof=1)*np.sqrt(250)).transpose()
+    Vol_adj_ret.index = ['Volatility']
+
+    AunRet_adj_ret = pd.DataFrame(((1+ADJ_MF_base).\
+                                cumprod()[-1:])**(250/len(ADJ_MF_base.index))-1)
+    AunRet_adj_ret.index = ['Return']
+
+    AunRet_SR = pd.DataFrame(np.array(AunRet_adj_ret)/np.array(Vol_adj_ret))
+    AunRet_SR.index = ['Sharpe']
+    AunRet_SR.columns = AunRet_adj_ret.columns
+    
+    equity_curve = 100*((1+ADJ_MF_base).cumprod())
+       
+    Roll_Max = pd.rolling_max(equity_curve,window=len(equity_curve.index), \
+                                                                  min_periods=1)
+    Historical_Drawdown = equity_curve/Roll_Max - 1.0      
+    Max_Drawdown = pd.rolling_min(Historical_Drawdown, \
+                             window=len(equity_curve.index), min_periods=1)[-1:]
+    Max_Drawdown.index = ['MAX DD']
+    
+    Skew = pd.DataFrame(ADJ_MF_base.skew()).transpose()
+    Skew.index = ['Skew']
+    
+    Kurtosis = pd.DataFrame(ADJ_MF_base.kurtosis()).transpose()
+    Kurtosis.index = ['Kurtosis']
+    
+    Performance = pd.concat([AunRet_adj_ret,Vol_adj_ret,\
+                                   AunRet_SR,Max_Drawdown,Skew,Kurtosis],axis=0)
+
+    def specific_term_Perf(DF_ret,term): 
+        ADJ_MF_base_st = DF_ret[-1*term:]
+        Vol_adj_ret_st = pd.DataFrame(np.std(ADJ_MF_base_st, \
+                                               ddof=1)*np.sqrt(250)).transpose()
+        Vol_adj_ret_st.index = ['Volatility']
+
+        AunRet_adj_ret_st = pd.DataFrame(((1+ADJ_MF_base_st).cumprod()[-1:])**\
+                                              (250/len(ADJ_MF_base_st.index))-1)
+        AunRet_adj_ret_st.index = ['Return']
+
+        AunRet_SR_st = pd.DataFrame(np.array(AunRet_adj_ret_st)/np.array(Vol_adj_ret_st))
+        AunRet_SR_st.index = ['Sharpe']
+        AunRet_SR_st.columns = AunRet_adj_ret.columns
+
+        equity_curve_st = 100*((1+ADJ_MF_base_st).cumprod())
+       
+        Roll_Max_st = pd.rolling_max(equity_curve_st,\
+                                 window=len(equity_curve.index),  min_periods=1)
+        Historical_Drawdown_st = equity_curve_st/Roll_Max_st - 1.0      
+        Max_Drawdown_st = pd.rolling_min(Historical_Drawdown_st, \
+                             window=len(equity_curve.index), min_periods=1)[-1:]
+        Max_Drawdown_st.index = ['MAX DD']   
+        
+        Performance_st = pd.concat([AunRet_adj_ret_st,Vol_adj_ret_st,\
+                                              AunRet_SR_st,Max_Drawdown],axis=0)      
+                       
+        return Performance_st
+    
+    Performance_1y = specific_term_Perf(ADJ_MF_base,250*1) 
+    Performance_3y = specific_term_Perf(ADJ_MF_base,250*3) 
+    Performance_5y = specific_term_Perf(ADJ_MF_base,250*5) 
+
+    equity_curve = 100*((1+ADJ_MF_base).cumprod())
+
+    Roll_Max_12m = pd.rolling_max(equity_curve, window=250, min_periods=250)
+    Historical_Drawdown_12m = equity_curve/Roll_Max_12m - 1.0    
+ 
+    sns.set_palette("Set1", len(equity_curve.columns))
+
+    plt.figure(figsize=(10, 5), dpi=80)
+    plt.title('Equity Curve')
+    plt.plot(equity_curve.index,equity_curve)
+    plt.legend(equity_curve.columns,loc="upper center",bbox_to_anchor=(1.3,0.8)) 
+    plt.suptitle('')
+    plt.show()
+    
+    plt.figure(figsize=(10, 5), dpi=80)
+    plt.title('Max DD (250-days rolling)')
+    plt.plot(Historical_Drawdown_12m.index,Historical_Drawdown_12m)
+    plt.legend(Historical_Drawdown_12m.columns,loc="upper center",\
+                                                       bbox_to_anchor=(1.3,0.8)) 
+    plt.suptitle('')
+    plt.show()    
+    
+
+    print('----------------Statistics(Whole Period)---------------------------')    
+    ax1 = plt.subplot(111)
+    plt.axis('off')
+    tbl = table(ax1, np.round(Performance.transpose(),4), loc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    plt.show() 
+    
+    print('----------------Statistics(1 year)---------------------------')
+    ax1 = plt.subplot(111)      
+    plt.axis('off') 
+    tbl = table(ax1, np.round(Performance_1y.transpose(),4), loc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    plt.show() 
+
+    print('----------------Statistics(3 year)---------------------------')    
+    ax1 = plt.subplot(111)
+    plt.axis('off')   
+    tbl = table(ax1, np.round(Performance_3y.transpose(),4), loc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    plt.show() 
+
+    print('----------------Statistics(5 year)---------------------------') 
+    ax1 = plt.subplot(111)
+    plt.axis('off')  
+    tbl = table(ax1, np.round(Performance_5y.transpose(),4), loc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    plt.show() 
+            
+    
+    CORR_Base_data = ADJ_MF_base.corr()   
+    plt.figure(figsize=(6, 3), dpi=80)
+    heatmap = sns.heatmap(CORR_Base_data,cbar=False,annot=True,\
+                                                       cmap='Blues_r',fmt='.3f')
+    plt.suptitle('Correlation')
+    plt.show()
+   
+
+
+    ret_a = equity_curve.resample("A",how='last').pct_change()
+    ret_a['year'] = (ret_a.index).year
+    ret_a.index = ret_a['year']
+
+    ret_a[DF_Base_data.columns].plot(kind='bar',alpha=0.8,figsize=(11, 5));
+    plt.legend(loc=(1.0,0.4))
+    plt.suptitle('Calendar Year Return')
+    plt.show()
+    
+    return
+
+factor_index = adj_ret.drop('Hedge',axis=1).copy()
+
+bounds = [set_bounds for i in factor_index.columns]
+# bounds[8] = bounds_for_hedge
+
+
+H_MV_weight = calc_historical_MV_weight(factor_index,input_Look_back,
+                                                            input_Min_Look_back)
+DF_MV_weight = pd.DataFrame.from_dict(H_MV_weight).transpose()
+DF_MV_weight.columns = factor_index.columns 
+
+H_ERC_weight = calc_historical_RP_weight(factor_index,input_Look_back,\
+                                                            input_Min_Look_back)
+DF_ERC_weight = pd.DataFrame.from_dict(H_ERC_weight).transpose()
+DF_ERC_weight.columns = factor_index.columns 
+
+H_ERC_weight_withL1P = calc_historical_RP_weight_withL1P(factor_index,\
+                                            input_Look_back,input_Min_Look_back)
+DF_ERC_weight_withL1P = pd.DataFrame.from_dict(H_ERC_weight_withL1P).transpose()
+DF_ERC_weight_withL1P.columns = factor_index.columns 
+                       
+H_InvVol_weight = calc_historical_InvVol_weight(factor_index,input_Look_back,\
+                                                            input_Min_Look_back)
+DF_InvVol_weight = pd.DataFrame.from_dict(H_InvVol_weight).transpose()
+DF_InvVol_weight.columns = factor_index.columns 
+
+H_MS_weight = calc_historical_max_sharpe_weight_SMA(factor_index,input_Look_back,\
+                   input_Min_Look_back,input_Look_back_for_Expected_ret,\
+                                           input_Min_Look_back_for_Expected_ret)    
+DF_MS_weight = pd.DataFrame.from_dict(H_MS_weight).transpose()
+DF_MS_weight.columns = factor_index.columns 
+
+H_MS_weight_EMA = calc_historical_max_sharpe_weight_EMA(factor_index,\
+                                            input_Look_back,input_Min_Look_back)    
+DF_MS_weight_EMA = pd.DataFrame.from_dict(H_MS_weight_EMA).transpose()
+DF_MS_weight_EMA.columns = factor_index.columns 
+
+DF_InvVol_weight_selected = calc_historical_InvVol_weight_selected(factor_index,\
+                                            input_Look_back,input_Min_Look_back)
+
+H_MS_weight_EMA_robust = calc_historical_max_sharpe_weight_EMA_robust(factor_index,\
+                                           input_Look_back,input_Min_Look_back)    
+DF_MS_weight_EMA_robust = pd.DataFrame.from_dict(H_MS_weight_EMA_robust).transpose()
+DF_MS_weight_EMA_robust.columns = factor_index.columns 
+
+
+
+H_MS_weight_EMA_withL1P = calc_historical_max_sharpe_weight_EMAwithL1P(factor_index,\
+                                            input_Look_back,input_Min_Look_back)    
+DF_MS_weight_EMA_withL1P = pd.DataFrame.from_dict(H_MS_weight_EMA_withL1P).transpose()
+DF_MS_weight_EMA_withL1P.columns = factor_index.columns 
+
+
+
+def adj_weight(DF_ret,DF_weight):
+    date_tmp = pd.DataFrame()
+    date_tmp['tmp_date'] = DF_ret.ix[:,1]
+    
+    DF_weight = pd.concat([date_tmp,DF_weight],axis=1).\
+                                  fillna(method='ffill').drop('tmp_date',axis=1)
+    DF_weight = pd.concat([date_tmp,DF_weight],axis=1,\
+                             join_axes=[date_tmp.index]).drop('tmp_date',axis=1)
+    
+    return pd.DataFrame(DF_weight)
+
+ret_for_port = ret_data.drop('Hedge',axis=1).copy()
+
+DF_MV_weight = adj_weight(ret_for_port,DF_MV_weight.resample("M").last()).dropna(axis=0)
+DF_ERC_weight = adj_weight(ret_for_port,DF_ERC_weight.resample("M").last()).dropna(axis=0)
+DF_ERC_weight_withL1P = adj_weight(ret_for_port,DF_ERC_weight_withL1P.resample("M").last()).dropna(axis=0)
+DF_InvVol_weight = adj_weight(ret_for_port,DF_InvVol_weight.resample("M").last()).dropna(axis=0)
+DF_MS_weight = adj_weight(ret_for_port,DF_MS_weight.resample("M").last()).dropna(axis=0)
+DF_MS_weight_EMA = adj_weight(ret_for_port,DF_MS_weight_EMA.resample("M").last()).dropna(axis=0)
+DF_InvVol_weight_selected = adj_weight(ret_for_port,DF_InvVol_weight_selected.resample("M").last()).dropna(axis=0)
+DF_MS_weight_EMA_robust = adj_weight(ret_for_port,DF_MS_weight_EMA_robust.resample("M").last()).dropna(axis=0)
+DF_MS_weight_EMA_withL1P = adj_weight(ret_for_port,DF_MS_weight_EMA_withL1P.resample("M").last()).dropna(axis=0)
+
+
+
+RP_ret_MV = pd.DataFrame(np.sum((ret_for_port*DF_MV_weight.shift(lag_trade-1)).\
+                                                         dropna(axis=0),axis=1))
+RP_ret_MV.columns = ['Minimum_Vol']
+
+RP_ret_ERC = pd.DataFrame(np.sum((ret_for_port*DF_ERC_weight.\
+                                     shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_ERC.columns = ['Equal_Risk_Contribution']
+    
+RP_ret_ERC_withL1P  = pd.DataFrame(np.sum((ret_for_port*DF_ERC_weight_withL1P.\
+                                     shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_ERC_withL1P.columns = ['Equal_Risk_Contribution(cov with L1-penalized)']
+
+RP_ret_InvVol = pd.DataFrame(np.sum((ret_for_port*DF_InvVol_weight.\
+                                    shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_InvVol.columns = ['Inverse_Vol']
+
+RP_ret_MS = pd.DataFrame(np.sum((ret_for_port*DF_MS_weight.\
+                                     shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_MS.columns = ['Maximum Sharpe(SMA)']
+
+RP_ret_MS_EMA = pd.DataFrame(np.sum((ret_for_port*DF_MS_weight_EMA.\
+                                     shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_MS_EMA.columns = ['Maximum Sharpe(EMA)']
+
+RP_ret_InvVol_selected = \
+           pd.DataFrame(np.sum((ret_for_port[DF_InvVol_weight_selected.columns]*\
+            DF_InvVol_weight_selected.shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_InvVol_selected.columns = ['Inverse_Vol(Selected)']
+
+RP_ret_MS_EMA_robust = \
+                     pd.DataFrame(np.sum((ret_for_port*DF_MS_weight_EMA_robust.\
+                                     shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_MS_EMA_robust.columns = ['Maximum Sharpe(EMA,Volatiliy_robust)']
+
+RP_ret_MS_EMA_withL1P = \
+                   pd.DataFrame(np.sum((ret_for_port*DF_MS_weight_EMA_withL1P.\
+                                     shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_MS_EMA_withL1P.columns = ['Maximum Sharpe(EMA) (cov with L1-penalized)']
+
+                                                                                                    
+Portfolio_return = pd.concat([RP_ret_MV,RP_ret_ERC,RP_ret_ERC_withL1P,\
+                  RP_ret_InvVol,RP_ret_MS,RP_ret_MS_EMA,RP_ret_InvVol_selected,\
+                    RP_ret_MS_EMA_robust,RP_ret_MS_EMA_withL1P],axis=1).dropna()
+
+# Portfolio_value = 100*((1+Portfolio_return).cumprod())
+# Portfolio_value_M = Portfolio_value.resample("M",how='last')
+# Portfolio_value_M = Portfolio_value_M/Portfolio_value_M.shift(1)-1
+# Portfolio_value_M.to_clipboard()
+
+out_performacne(Portfolio_return)
+
+Portfolio_return.to_clipboard()
+
+"""
+Weight & Decomposition
+"""
+print("----------------------------------------------------------------------")
+print("----------------------------------------------------------------------")
+print("-----Weight & Decomposition-------------------------------------------")
+print("----------------------------------------------------------------------")
+print("----------------------------------------------------------------------")
+
+
+print("-----Minimum Volatility-----------------------------------------------")
+sns.set_palette("Set1_r", len(DF_MV_weight.columns))
+# plt.subplot(2, 1, 1)
+DF_MV_weight.plot(y=DF_MV_weight.columns, kind='area', stacked=True,\
+                                         alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_MV_weight.columns,loc="upper center",bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Minimum Volatility')
+
+decomp = (ret_for_port[DF_InvVol_weight_selected.columns]*\
+           DF_InvVol_weight_selected.shift(lag_trade-1)).cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Minimum Volatility,Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+print("-----Equal Risk Contribution-------------------------------------------")
+
+# plt.subplot(7, 2, 1)
+DF_ERC_weight.plot(y=DF_ERC_weight.columns, kind='area', stacked=True, \
+                                         alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_ERC_weight.columns,loc="upper cente.r",bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Equal_Risk_Contribution')
+
+decomp = (ret_for_port*DF_ERC_weight.shift(lag_trade-1)).dropna(axis=0).\
+                                                        cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Equal_Risk_Contribution,Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+print("-----Equal Risk Contribution (cov with L1-penalized)-------------------")
+
+# plt.subplot(7, 2, 1)
+DF_ERC_weight_withL1P.plot(y=DF_ERC_weight_withL1P.columns, kind='area', \
+                           stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_ERC_weight_withL1P.columns,loc="upper cente.r",\
+                                                       bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Equal_Risk_Contribution(cov with L1-penalized)')
+
+decomp = (ret_for_port*DF_ERC_weight_withL1P.shift(lag_trade-1)).\
+                                          dropna(axis=0).cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Equal_Risk_Contribution(cov with L1-penalized),Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+
+print("-----Inverse Volatility------------------------------------------------")
+# plt.subplot(7, 3, 1)
+DF_InvVol_weight.plot(y=DF_InvVol_weight.columns, kind='area', \
+                           stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_InvVol_weight.columns,loc="upper center",bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Inverse Volatility')
+
+decomp = (ret_for_port*DF_InvVol_weight.shift(lag_trade-1)).\
+                                                         cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Inverse Volatility,Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+
+print("-----Maximum Sharpe(SMA)-----------------------------------------------")
+# plt.subplot(7, 4, 1)
+DF_MS_weight.plot(y=DF_MS_weight.columns, kind='area', stacked=True, \
+                                         alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_MS_weight.columns,loc="upper center",bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Maximum Sharpe(SMA)')
+
+
+decomp = (ret_for_port*DF_MS_weight.shift(lag_trade-1)).cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Maximum Sharpe(SMA),Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+
+print("-----Maximum Sharpe(EMA)-----------------------------------------------")
+# plt.subplot(7, 1, 2)
+DF_MS_weight_EMA.plot(y=DF_MS_weight_EMA.columns, kind='area', \
+                           stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_MS_weight_EMA.columns,loc="upper center",bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Maximum Sharpe(EMA)')
+
+decomp = (ret_for_port*DF_MS_weight_EMA.shift(lag_trade-1)).\
+                                                         cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Maximum Sharpe(EMA),Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+print("-----Inverse_Vol(Selected)---------------------------------------------")
+# plt.subplot(7, 1, 3)
+DF_InvVol_weight_selected.plot(y=DF_InvVol_weight_selected.columns,\
+              kind='area', stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_InvVol_weight_selected.columns,loc="upper center",\
+                                                       bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Inverse_Vol(Selected)')
+
+decomp = (ret_for_port[DF_InvVol_weight_selected.columns]*\
+           DF_InvVol_weight_selected.shift(lag_trade-1)).cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Inverse_Vol(Selected),Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+print("-----Maximum Sharpe(EMA,Volatiliy_robust)------------------------------")
+
+# plt.subplot(7, 1, 4)
+DF_MS_weight_EMA_robust.plot(y=DF_MS_weight_EMA_robust.columns, \
+              kind='area', stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_MS_weight_EMA_robust.columns,loc="upper center",\
+                                                       bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Maximum Sharpe(EMA,Volatiliy_robust)')
+plt.show()
+
+decomp = (ret_for_port*DF_MS_weight_EMA_robust.shift(lag_trade-1))\
+                                                        .cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Maximum Sharpe(EMA,Volatiliy_robust),Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+print("-----Maximum Sharpe(EMA) cov with L1-penalized-------------------------")
+# plt.subplot(7, 1, 2)
+DF_MS_weight_EMA_withL1P.plot(y=DF_MS_weight_EMA_withL1P.columns,\
+              kind='area', stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_MS_weight_EMA_withL1P.columns,loc="upper center",\
+                                                       bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Maximum Sharpe(EMA) cov with L1-penalized')
+
+decomp = (ret_for_port*DF_MS_weight_EMA_withL1P.shift(lag_trade-1)).\
+                                                         cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Maximum Sharpe(EMA)(cov with L1-penalized),Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+
+def calc_TurnOver(DF_weight):
+    TO = np.sum(abs(DF_weight-(DF_weight.shift(1)) ),axis=1).mean()*12
+    # return print(str(float(np.round(TO*100,1)))+'%')
+    return TO
+
+def calc_ConcentrationRatio(DF_weight):
+    CR = np.sum(1/(DF_weight**2) )
+    return CR
+
+
+def calc_corr_comparison(DF_strategy,comparison_index):
+    base_for_corr = pd.concat([DF_strategy,comparison_index],axis=1).dropna(axis=0)
+    CORR_comparison =base_for_corr.corr()   
+    plt.figure(figsize=(12, 6), dpi=80)
+    heatmap = sns.heatmap(CORR_comparison,cbar=False,annot=True,cmap='Blues_r',fmt='.3f')
+    plt.suptitle('Correlation with index')
+    plt.show()   
+    return 
+
+df_TO_data = pd.DataFrame({\
+'1_Minimum Volatility':[str(float(np.round(calc_TurnOver(DF_MV_weight.resample("M",how='last'))*100,1)))+'%'],\
+'2_Equal_Risk_Contribution':[str(float(np.round(calc_TurnOver(DF_ERC_weight.resample("M",how='last'))*100,1)))+'%'],\
+'3_Equal_Risk_Contribution(cov with L1-penalized)':[str(float(np.round(calc_TurnOver(DF_ERC_weight_withL1P.resample("M",how='last'))*100,1)))+'%'],\
+'4_Inverse Volatility':[str(float(np.round(calc_TurnOver(DF_InvVol_weight.resample("M",how='last'))*100,1)))+'%'],\
+'5_Max Sharpe(SMA)':[str(float(np.round(calc_TurnOver(DF_MS_weight.resample("M",how='last'))*100,1)))+'%'],\
+'6_Max Sharpe(EMA)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA.resample("M",how='last'))*100,1)))+'%'],\
+'7_Inverse_Vol(Selected)':[str(float(np.round(calc_TurnOver(DF_InvVol_weight_selected.resample("M",how='last'))*100,1)))+'%'],\
+'8_Maximum Sharpe(EMA,Volatiliy_robust)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_robust.resample("M",how='last'))*100,1)))+'%'],\
+'9_Max Sharpe(EMA)(cov with L1-penalized)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_withL1P.resample("M",how='last'))*100,1)))+'%'],\
+})
+df_TO_data.index = ['Turn Over(12 month, One-way)']
+
+
+ax1 = plt.subplot(111)
+plt.axis('off')  
+# plt.suptitle('Turn Over')
+tbl = table(ax1, np.round(df_TO_data.transpose(),4), loc='center')
+tbl.auto_set_font_size(False)
+tbl.set_fontsize(10)
+plt.show() 
+
+
+print("---Each Endex Performance----------------------------------------------")
+out_performacne(adj_return(ret_for_port))
+
+print("---Correlation---------------------------------------------------------")
+Portfolio_value = 100*((1+Portfolio_return).cumprod())
+Portfolio_value_w = Portfolio_value.resample("D",how='last').dropna(axis=0)
+Portfolio_value_W = Portfolio_value_w/Portfolio_value_w.shift(1)-1
+
+calc_corr_comparison(Portfolio_value_W,W_comparison_index_ret)
+
+calc_corr_comparison(base_return_W,W_comparison_index_ret)
+
+
