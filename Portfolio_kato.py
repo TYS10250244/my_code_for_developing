@@ -14,7 +14,7 @@ from scipy.cluster.hierarchy import ward, dendrogram
 from sklearn import  covariance
 
 import sys
-sys.path.append('K:\\KB600\\AssetAllocation\\Research_Platform\\python\\Portfolio')
+sys.path.append('')
 # sys.path
 import Daily.Out_performance as Daily_Out_performance
 import Daily.Expected_ret as Daily_Expected_ret
@@ -26,7 +26,7 @@ MaxSharpe_withL1P = Daily_portfolio.calc_historical_max_sharpe_weight_EMAwithL1P
 ERC = Daily_portfolio.calc_historical_RP_weight
 G_LassoCV = covariance.GraphLassoCV(cv=5)
 
-Data_direct = "K:\\KB600\\AssetAllocation\\Sawagashira\Kato\\Marketing\\DL\\data\\"
+Data_direct = ""
 
 ret_data = pd.read_csv(Data_direct+"Return_Data_for_DL_daily.csv",index_col=0)
 ret_data.index = pd.to_datetime(ret_data.index)
