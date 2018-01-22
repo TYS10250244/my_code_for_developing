@@ -25,7 +25,7 @@ from sklearn import  covariance
 G_LassoCV = covariance.GraphLassoCV(cv=5)
 
 def cov_mat(df_ret,lookbak):
-    return DataFrame.cov(ret0[-1*lookbak:])
+    return pd.DataFrame.cov(ret0[-1*lookbak:])
     
 
 def cov_mat_L1p(df_ret,lookbak):
