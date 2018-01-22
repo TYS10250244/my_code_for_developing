@@ -1,11 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-Created on Tue Jan 23 06:44:19 2018
-
-@author: katou
-"""
-
 import pandas as pd
 import matplotlib.pyplot as plt
 from pandas.tools.plotting import table
