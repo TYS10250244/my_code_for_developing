@@ -1,0 +1,31 @@
+# -*- coding: utf-8 -*-
+import pandas as pd
+import numpy as np
+import warnings;warnings.filterwarnings('ignore')
+
+def Ret_volatility_adjust(df_ret,freq,target_vol,adj_window,adj_min_window):
+    """
+    1 year : 12-month, 50-week, 250-day 
+    """
+    if freq == 'M':
+        adj_ret =  target_vol*df_ret/(pd.rolling_std(df_ret,window=adj_window,\
+                                        min_periods=adj_min_window)*np.sqrt(12))
+    if freq == 'W':
+        adj_ret =  target_vol*df_ret/(pd.rolling_std(df_ret,window=adj_window,\
+                                        min_periods=adj_min_window)*np.sqrt(50))
+    if freq == 'D':
+        adj_ret =  target_vol*df_ret/(pd.rolling_std(df_ret,window=adj_window,\
+                                       min_periods=adj_min_window)*np.sqrt(250))
+    return adj_ret
+
+
+def Change_ret_freq(df_ret,out_freq):
+    """
+    out_freq : D, W, M, Q or A,
+    """
+    df_ret.index = pd.to_datetime(df_ret.index)
+    Index_value=100*((1+df_ret).cumprod())
+    Index_value = Index_value.resample(out_freq,how='last')
+    return pd.DataFrame((Index_value/Index_value.shift(1)-1) ).dropna(axis=0)
+    
+    
