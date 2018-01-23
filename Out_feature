@@ -1,0 +1,54 @@
+# -*- coding: utf-8 -*-
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns 
+from sklearn.decomposition import PCA
+from scipy.cluster.hierarchy import ward, dendrogram
+import warnings;warnings.filterwarnings('ignore')
+
+
+def out_dendrogram_ward(df_ret,color_threshold=0.5):
+    """
+    color_threshold : 
+    """
+    ward_result = ward(df_ret.transpose())
+    plt.figure(figsize=(8,8), dpi=80)
+    plt.suptitle('Cluster Analysis(Dendrogram)')
+    dendrogram(ward_result, leaf_rotation=0,orientation='left', \
+                         labels=df_ret.columns,color_threshold=color_threshold)
+    plt.show()
+    return
+    
+    
+def out_PCA_analysis(df_ret):
+    pca = PCA(n_components=5)
+    pca.fit(df_ret)
+    components_all = pd.concat([\
+                                pd.DataFrame(pca.components_[0]).transpose(),\
+                                pd.DataFrame(pca.components_[1]).transpose(),\
+                                pd.DataFrame(pca.components_[2]).transpose(),\
+                                pd.DataFrame(pca.components_[3]).transpose(),\
+                                pd.DataFrame(pca.components_[4]).transpose()\
+                                ],axis=0)
+    components_all.columns = df_ret.columns
+    components_all = components_all.transpose()
+    components_all.columns = ['PC1','PC2','PC3','PC4','PC5']
+
+    sns.set_palette("hls", len(components_all.columns))
+    components_all.plot(kind='bar',alpha=0.9,figsize=(11, 5));
+    plt.legend(loc=(1.0,0.3))
+    plt.suptitle('PCA')
+    plt.show()
+    
+    
+    PCA_variance_ratio = pd.DataFrame(pca.explained_variance_ratio_)
+    PCA_variance_ratio.index = ['PC1','PC2','PC3','PC4','PC5']
+    PCA_variance_ratio.columns = ['Variance Ratio']
+    sns.set_palette("hls", len(PCA_variance_ratio.columns))
+    PCA_variance_ratio.plot(kind='bar',alpha=0.9,figsize=(11, 5))
+    plt.legend(loc=(0.8,0.85))
+    plt.suptitle('Variance Ratio')
+    plt.show()
+    
+    return    
