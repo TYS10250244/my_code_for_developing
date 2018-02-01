@@ -1,0 +1,35 @@
+# -*- coding: utf-8 -*-
+"""
+Created on Thu Feb  1 11:04:34 2018
+"""
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from pandas.tools.plotting import table
+import seaborn as sns 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pandas.tools.plotting import table
+from statsmodels.tsa import stattools
+from statsmodels.tsa.stattools import grangercausalitytests
+
+
+def ADF_test(input_data):
+    res_ctt = stattools.adfuller(ret_data['TPX Index'][-120:], regression="ctt") # トレンド項あり（２次）、定数項あり
+    res_ct = stattools.adfuller(ret_data['TPX Index'][-120:], regression="ct") # トレンド項あり（１次）、定数項あり
+    res_c = stattools.adfuller(ret_data['TPX Index'][-120:], regression="c") # トレンド項なし、定数項あり
+    res_nc = stattools.adfuller(ret_data['TPX Index'][-120:], regression="nc") # トレンド項なし、定数項なし
+    print("------cconstant only ---------------------------------------------")
+    print(res_c)
+    print("------no constant, no tren--------------------")
+    print(res_nc)
+    print("------constant, and linear and quadratic trend--------------------")
+    print(res_ctt)
+    print("------constant and trend------------------------------------------")
+    print(res_ct)
+   
+    return
+
+result = grangercausalitytests(DF_input, maxlag=15) 
+
