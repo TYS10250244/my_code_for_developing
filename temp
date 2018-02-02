@@ -1,0 +1,282 @@
+
+# -*- coding: utf-8 -*-
+%matplotlib inline
+import pandas as pd
+import pyfolio.plotting as plotting
+import pyfolio.timeseries as timeseries
+import matplotlib.pyplot as plt
+from pandas.tools.plotting import table
+import seaborn as sns 
+from sklearn.decomposition import PCA
+import warnings;warnings.filterwarnings('ignore')
+from pandas import Series, DataFrame
+from scipy.optimize import minimize
+from scipy.cluster.hierarchy import ward, dendrogram
+from sklearn import  covariance
+
+Data_direct = "*************************"
+
+"""
+For Return Adjust
+"""
+Look_back = 36
+Min_Look_back = 12
+target_vol = 0.05
+
+"""
+For portforio construction
+"""
+input_Look_back = 36
+input_Min_Look_back = 12
+
+
+"""
+ bounds for portforio construction
+"""
+set_bounds = (0.00, 1.0)
+
+
+"""
+ Expected return
+"""
+input_Look_back_for_Expected_ret = 36
+input_Min_Look_back_for_Expected_ret = 12
+input_halflife_for_ER = 12
+
+"""
+ Selected index
+"""
+num_Selected = 5
+
+"""
+ Trade(T+(x-1))
+"""
+lag_trade = 2
+
+
+G_LassoCV = covariance.GraphLassoCV(cv=5)
+
+ret_data = pd.read_csv(Data_direct+"Return_Data.csv",index_col=0)
+
+ret_data.index = pd.to_datetime(ret_data.index)
+Index_value=100*((1+ret_data).cumprod())
+Index_value_w = Index_value.resample("M",how='last')
+base_return_W = Index_value_w/Index_value_w.shift(1)-1
+
+adj_ret = base_return_W.copy()
+
+def Calc_Pairwise_Corr(input_ret_M):
+    Rolling_corr = pd.rolling_corr(input_ret_M,window=LongCorr_Look_back,min_periods=LongCorr_Min_Look_back) 
+    tmp = Rolling_corr.apply(lambda x: np.fill_diagonal(x.values, None), axis=(1,2)) 
+    apc = Rolling_corr.apply(lambda x: x.unstack().mean(skipna=True), axis=(1,2))
+    return apc
+
+
+def adj_return(input_ret):
+    input_ret.index = pd.to_datetime(input_ret.index)
+    a_ret = input_ret.copy()
+    rets = target_vol * a_ret/(np.std(a_ret, ddof=1)*np.sqrt(12))
+    return rets
+
+def weight_sum_constraint(x) :
+    return(x.sum() - 1.0 )
+
+
+def weight_longonly(x) :
+    return(x)
+
+def RC(weight, covmat) :
+    weight = np.array(weight)
+    variance = weight.T @ covmat @ weight
+    sigma = variance ** 0.5
+    mrc = 1/sigma * (covmat @ weight)
+    rc = weight * mrc
+    rc = rc / rc.sum()
+    return(rc)
+    
+def RiskParity_objective(x) :
+    variance = x.T @ covmat @ x
+    sigma = variance ** 0.5
+    mrc = 1/sigma * (covmat @ x)
+    rc = x * mrc
+    a = np.reshape(rc, (len(rc), 1))
+    risk_diffs = a - a.T
+    sum_risk_diffs_squared = np.sum(np.square(np.ravel(risk_diffs)))
+    return (sum_risk_diffs_squared)    
+        
+def Minimum_variance(x) :
+    variance = x.T @ covmat @ x
+    risk = variance 
+    return (risk)                  
+
+
+def Expected_return_SMA(DF_return,window_for_ER,min_window_for_ER) :
+    Exp_ret = pd.rolling_mean(DF_return,window=window_for_ER,min_periods=min_window_for_ER)  
+    return(Exp_ret)
+ 
+def Expected_return_EMA1(x, halflife):
+    return pd.DataFrame(x).ewm(halflife=halflife).mean()
+        
+def Max_sharpe_objdect(x) :
+    variance = x.T @ covmat @ x
+    sigma = variance ** 0.5
+    ret =  expcted_ret @ x 
+    expeted_sharpe = (ret/sigma)[0]  
+    return (-1 * expeted_sharpe)                                                 
+
+def RiskParity(covmat) :
+    
+    x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 800}
+    result = minimize(fun = RiskParity_objective,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)                     
+
+
+def MinimumVariance(covmat) :
+    global bounds
+    x0 = np.repeat(0, covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 10000}
+    result = minimize(fun = Minimum_variance,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      bounds = bounds,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)     
+
+
+def Max_sharpe(covmat, expcted_ret) :
+    global bounds
+    x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 10000}
+    result = minimize(fun = Max_sharpe_objdect,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      bounds = bounds,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)    
+
+Expected_ret_EMA = pd.DataFrame()
+for date in adj_ret[input_Min_Look_back_for_Expected_ret:].resample("M").index:
+    ret0 = adj_ret[:date][-1*input_Look_back_for_Expected_ret:]
+    halflife = input_halflife_for_ER
+    if len(ret0.index) < input_halflife_for_ER:
+        halflife = int(len(ret0.index)/2)
+    # print(halflife)    
+    
+    Expected_ret_EMA0 = Expected_return_EMA1(ret0,halflife)[-1:] 
+    Expected_ret_EMA0['date'] = date
+    Expected_ret_EMA  = pd.concat([Expected_ret_EMA ,Expected_ret_EMA0],axis=0) 
+ 
+Expected_ret_EMA.index = Expected_ret_EMA['date']
+Expected_ret_EMA = Expected_ret_EMA.drop('date',axis=1)       
+DF_Expected_ret_EMA = pd.DataFrame.from_dict(Expected_ret_EMA).transpose()    
+
+
+covmat = pd.DataFrame()
+expcted_ret = pd.DataFrame()
+def calc_historical_max_sharpe_weight_EMA(df_ret,lookbak,min_lookbak):
+    global covmat, expcted_ret, bounds
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+        # print('*----------------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        # print(ret0) 
+        covmat = DataFrame.cov(ret0)
+        expcted_ret = Expected_ret_EMA[:d][-1:][df_ret.columns]
+        print(expcted_ret)  
+        print(covmat)
+        print(lookbak)                            
+        result_weight[d] = Max_sharpe(covmat,expcted_ret)
+        # print(result_weight[d]) 
+    return result_weight
+    
+    
+    def target_risk_constraint(x) :
+    global Target_risk_p
+    variance = x.T @ covmat @ x
+    target_risk = abs(Target_risk_p/100 - variance*sqrt(12))
+    return (target_risk)  
+    
+    
+    
+def Max_sharpe_TargetRisk(covmat, expcted_ret) :
+    global bounds
+    x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly},
+                  {'type': 'eq', 'fun': target_risk_constraint})
+    options = {'ftol': 1e-20, 'maxiter': 10000}
+    result = minimize(fun = Max_sharpe_objdect,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      bounds = bounds,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)        
+    
+covmat = pd.DataFrame()
+expcted_ret = pd.DataFrame()
+def calc_historical_max_sharpe_weight_EMA_TargetRisk(df_ret,lookbak,min_lookbak):
+    global covmat, expcted_ret, bounds
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+        # print('*----------------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        # print(ret0) 
+        covmat = DataFrame.cov(ret0)
+        expcted_ret = Expected_ret_EMA[:d][-1:][df_ret.columns]
+        print(expcted_ret)  
+        print(covmat)
+        print(lookbak)                            
+        result_weight[d] = Max_sharpe_TargetRisk(covmat,expcted_ret)
+        # print(result_weight[d]) 
+    return result_weight     
+    
+H_MS_weight_EMA = calc_historical_max_sharpe_weight_EMA(factor_index,input_Look_back,\
+                   input_Min_Look_back)    
+DF_MS_weight_EMA = pd.DataFrame.from_dict(H_MS_weight_EMA).transpose()
+DF_MS_weight_EMA.columns = factor_index.columns 
+
+Target_risk_p = 3
+H_MS_weight_EMA_TargetRisk_3 = calc_historical_max_sharpe_weight_EMA_TargetRisk(factor_index,input_Look_back,\
+                   input_Min_Look_back)    
+DF_MS_weight_EMA_TargetRisk_3 = pd.DataFrame.from_dict(H_MS_weight_EMA_TargetRisk_3).transpose()
+DF_MS_weight_EMA_TargetRisk_3.columns = factor_index.columns 
+
+Target_risk_p = 4
+H_MS_weight_EMA_TargetRisk_4 = calc_historical_max_sharpe_weight_EMA_TargetRisk(factor_index,input_Look_back,\
+                   input_Min_Look_back)    
+DF_MS_weight_EMA_TargetRisk_4 = pd.DataFrame.from_dict(H_MS_weight_EMA_TargetRisk_3).transpose()
+DF_MS_weight_EMA_TargetRisk_4.columns = factor_index.columns 
+
+
+Target_risk_p = 5
+H_MS_weight_EMA_TargetRisk_5 = calc_historical_max_sharpe_weight_EMA_TargetRisk(factor_index,input_Look_back,\
+                   input_Min_Look_back)    
+DF_MS_weight_EMA_TargetRisk_5 = pd.DataFrame.from_dict(H_MS_weight_EMA_TargetRisk_3).transpose()
+DF_MS_weight_EMA_TargetRisk_5.columns = factor_index.columns 
+
+Target_risk_p = 6
+H_MS_weight_EMA_TargetRisk_6 = calc_historical_max_sharpe_weight_EMA_TargetRisk(factor_index,input_Look_back,\
+                   input_Min_Look_back)    
+DF_MS_weight_EMA_TargetRisk_6 = pd.DataFrame.from_dict(H_MS_weight_EMA_TargetRisk_3).transpose()
+DF_MS_weight_EMA_TargetRisk_6.columns = factor_index.columns     
+    
