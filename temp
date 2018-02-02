@@ -207,7 +207,7 @@ def calc_historical_max_sharpe_weight_EMA(df_ret,lookbak,min_lookbak):
     return result_weight
     
     
-    def target_risk_constraint(x) :
+def target_risk_constraint(x) :
     global Target_risk_p
     variance = x.T @ covmat @ x
     target_risk = abs(Target_risk_p/100 - variance*sqrt(12))
