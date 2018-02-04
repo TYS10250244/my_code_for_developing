@@ -1,9 +1,16 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sat Feb  3 19:52:08 2018
+
+"""
+
+
 
 # -*- coding: utf-8 -*-
 %matplotlib inline
 import pandas as pd
-import pyfolio.plotting as plotting
-import pyfolio.timeseries as timeseries
+import numpy as np
 import matplotlib.pyplot as plt
 from pandas.tools.plotting import table
 import seaborn as sns 
@@ -16,18 +23,22 @@ from sklearn import  covariance
 
 Data_direct = "*************************"
 
+
+unit_year = 250
+
+
 """
 For Return Adjust
 """
-Look_back = 36
-Min_Look_back = 12
+Look_back = unit_year*3
+Min_Look_back = unit_year
 target_vol = 0.05
 
 """
 For portforio construction
 """
-input_Look_back = 36
-input_Min_Look_back = 12
+input_Look_back = unit_year
+input_Min_Look_back = unit_year
 
 
 """
@@ -39,9 +50,9 @@ set_bounds = (0.00, 1.0)
 """
  Expected return
 """
-input_Look_back_for_Expected_ret = 36
-input_Min_Look_back_for_Expected_ret = 12
-input_halflife_for_ER = 12
+input_Look_back_for_Expected_ret = unit_year * 3
+input_Min_Look_back_for_Expected_ret = unit_year
+input_halflife_for_ER = unit_year
 
 """
  Selected index
@@ -53,10 +64,21 @@ num_Selected = 5
 """
 lag_trade = 2
 
+"""
+ Leverage constrain
+"""
+max_leverage = 1.0
+max_long_leverage = max_leverage * 0.2
+
+max_leverage0 = 4.0
 
 G_LassoCV = covariance.GraphLassoCV(cv=5)
 
-ret_data = pd.read_csv(Data_direct+"Return_Data.csv",index_col=0)
+inedx_data = pd.read_csv('/Users/katou/Public/ResearchData/MARKET/Index.csv',index_col=0).dropna(axis=0)
+inedx_data.index = pd.to_datetime(inedx_data.index)
+#inedx_data = inedx_data.resample("M",how='last')
+ret_data = (inedx_data/inedx_data.shift(1)-1)[['TPX Index','USDJPY curncy','SBWGNJYU Index','BPITTO01 Index','SPX Index','Bcom index']]
+
 
 ret_data.index = pd.to_datetime(ret_data.index)
 Index_value=100*((1+ret_data).cumprod())
@@ -64,6 +86,8 @@ Index_value_w = Index_value.resample("M",how='last')
 base_return_W = Index_value_w/Index_value_w.shift(1)-1
 
 adj_ret = base_return_W.copy()
+
+adj_ret = ret_data.copy()
 
 def Calc_Pairwise_Corr(input_ret_M):
     Rolling_corr = pd.rolling_corr(input_ret_M,window=LongCorr_Look_back,min_periods=LongCorr_Min_Look_back) 
@@ -75,15 +99,30 @@ def Calc_Pairwise_Corr(input_ret_M):
 def adj_return(input_ret):
     input_ret.index = pd.to_datetime(input_ret.index)
     a_ret = input_ret.copy()
-    rets = target_vol * a_ret/(np.std(a_ret, ddof=1)*np.sqrt(12))
+    rets = target_vol * a_ret/(np.std(a_ret, ddof=1)*np.sqrt(unit_year))
     return rets
 
 def weight_sum_constraint(x) :
     return(x.sum() - 1.0 )
 
 
+def weight_leverage_constraint(x) :
+    return( max_leverage - x.sum() )
+
+
 def weight_longonly(x) :
     return(x)
+    
+def weight_leverage_longonly(x) :
+    return(max_long_leverage - x)    
+
+                                                                                                                                                                                                                                                            
+def target_risk_constraint(x) :
+    global Target_risk_p
+    variance = x.T @ covmat @ x
+    target_risk = abs(float(Target_risk_p)/100 - np.sqrt(variance)*np.sqrt(unit_year))
+    return ( 0.0003 - target_risk)                    
+    
 
 def RC(weight, covmat) :
     weight = np.array(weight)
@@ -139,6 +178,24 @@ def RiskParity(covmat) :
     return(result.x)                     
 
 
+def RiskParity_leverage(covmat) :
+    x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
+    constraints = ({'type': 'ineq', 'fun': weight_leverage_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly},
+                  {'type': 'ineq', 'fun': weight_leverage_longonly},
+                  {'type': 'ineq', 'fun': target_risk_constraint},
+                  )
+    options = {'ftol': 1e-20, 'maxiter': 800}
+    result = minimize(fun = RiskParity_objective,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      options = options)
+    print(result.success)                                  
+    return(result.x)          
+
+
+
 def MinimumVariance(covmat) :
     global bounds
     x0 = np.repeat(0, covmat.shape[1]) 
@@ -186,8 +243,59 @@ def calc_historical_RP_weight(df_ret,lookbak,min_lookbak):
          
         result_weight[d] = RiskParity(covmat)
         # print(RiskParity(covmat)) 
+        print(np.sqrt(result_weight[d].T @ covmat @ result_weight[d])*np.sqrt(unit_year))
         
     return result_weight
+
+covmat = pd.DataFrame()
+def calc_historical_RP_leverage(df_ret,lookbak,min_lookbak):
+    global covmat,  Target_risk_p   
+    result_weight_1st = {}
+    result_weight = {}
+    
+    for d in df_ret[min_lookbak:].resample("M").index:
+    # for d in df_ret.index:
+
+        # print('*----------------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+        covmat = DataFrame.cov(ret0)
+        # print(covmat)            
+         
+        result_weight_1st[d] = RiskParity_leverage(covmat)
+        Vol_1st = np.sqrt(result_weight_1st[d].T @ covmat @ result_weight_1st[d])*np.sqrt(unit_year)
+
+        result_weight[d] = result_weight_1st[d] *float( min((Target_risk_p/100)/Vol_1st,max_leverage0))
+
+        # print(RiskParity(covmat)) 
+        print( np.sqrt(result_weight_1st[d].T @ covmat @ result_weight_1st[d])*np.sqrt(unit_year))                            
+        print(np.sqrt(result_weight[d].T @ covmat @ result_weight[d])*np.sqrt(unit_year))
+        
+    return result_weight
+
+
+
+#covmat = pd.DataFrame()
+#def calc_historical_RP_leverage(df_ret,lookbak,min_lookbak):
+#    global covmat,  Target_risk_p   
+#    result_weight_1st = {}
+#    result_weight = {}
+    
+#    for d in df_ret[min_lookbak:].resample("M").index:
+    # for d in df_ret.index:
+
+        # print('*----------------------------'+str(d)+'*----------------------------')        
+#        ret0 = df_ret[:d][-1*lookbak:]
+#        covmat = DataFrame.cov(ret0)
+        # print(covmat)            
+         
+#        result_weight[d] = RiskParity_leverage(covmat)
+
+        # print(RiskParity(covmat)) 
+#        print(np.sqrt(result_weight[d].T @ covmat @ result_weight[d])*np.sqrt(unit_year))
+        
+#    return result_weight
+
+
 
 covmat = pd.DataFrame()
 def calc_historical_RP_weight_withL1P(df_ret,lookbak,min_lookbak):
@@ -253,6 +361,10 @@ Expected_ret_EMA = Expected_ret_EMA.drop('date',axis=1)
 DF_Expected_ret_EMA = pd.DataFrame.from_dict(Expected_ret_EMA).transpose()    
 
 
+
+
+
+
 covmat = pd.DataFrame()
 expcted_ret = pd.DataFrame()
 def calc_historical_max_sharpe_weight_EMA(df_ret,lookbak,min_lookbak):
@@ -272,12 +384,7 @@ def calc_historical_max_sharpe_weight_EMA(df_ret,lookbak,min_lookbak):
         # print(result_weight[d]) 
     return result_weight
 
-                                                                                                                                                                                                                                                                                                                 
-def target_risk_constraint(x) :
-    global Target_risk_p
-    variance = x.T @ covmat @ x
-    target_risk = abs(float(Target_risk_p)/100 - np.sqrt(variance)*np.sqrt(12))
-    return (target_risk-0.0005)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                           
 
     
     
@@ -311,8 +418,9 @@ def calc_historical_max_sharpe_weight_EMA_TargetRisk(df_ret,lookbak,min_lookbak)
         expcted_ret = Expected_ret_EMA[:d][-1:][df_ret.columns]
         print(Target_risk_p)  
         print(covmat)
-        print(lookbak)                            
+        print(lookbak)
         result_weight[d] = Max_sharpe_TargetRisk(covmat,expcted_ret)
+        print(np.sqrt(result_weight[d].T @ covmat @ result_weight[d])*np.sqrt(unit_year))                            
         # print(result_weight[d]) 
     return result_weight     
                 
@@ -326,10 +434,10 @@ For Output Performance Summary
 def out_performacne(DF_Base_data):
     ADJ_MF_base =  DF_Base_data.copy()
 
-    Vol_adj_ret = pd.DataFrame(np.std(ADJ_MF_base, ddof=1)*np.sqrt(12)).transpose()
+    Vol_adj_ret = pd.DataFrame(np.std(ADJ_MF_base, ddof=1)*np.sqrt(unit_year)).transpose()
     Vol_adj_ret.index = ['Volatility']
 
-    AunRet_adj_ret = pd.DataFrame(((1+ADJ_MF_base).cumprod()[-1:])**(12/len(ADJ_MF_base.index))-1)
+    AunRet_adj_ret = pd.DataFrame(((1+ADJ_MF_base).cumprod()[-1:])**(unit_year/len(ADJ_MF_base.index))-1)
     AunRet_adj_ret.index = ['Return']
 
     AunRet_SR = pd.DataFrame(np.array(AunRet_adj_ret)/np.array(Vol_adj_ret))
@@ -353,10 +461,10 @@ def out_performacne(DF_Base_data):
 
     def specific_term_Perf(DF_ret,term): 
         ADJ_MF_base_st = DF_ret[-1*term:]
-        Vol_adj_ret_st = pd.DataFrame(np.std(ADJ_MF_base_st, ddof=1)*np.sqrt(12)).transpose()
+        Vol_adj_ret_st = pd.DataFrame(np.std(ADJ_MF_base_st, ddof=1)*np.sqrt(unit_year)).transpose()
         Vol_adj_ret_st.index = ['Volatility']
 
-        AunRet_adj_ret_st = pd.DataFrame(((1+ADJ_MF_base_st).cumprod()[-1:])**(12/len(ADJ_MF_base_st.index))-1)
+        AunRet_adj_ret_st = pd.DataFrame(((1+ADJ_MF_base_st).cumprod()[-1:])**(unit_year/len(ADJ_MF_base_st.index))-1)
         AunRet_adj_ret_st.index = ['Return']
 
         AunRet_SR_st = pd.DataFrame(np.array(AunRet_adj_ret_st)/np.array(Vol_adj_ret_st))
@@ -374,13 +482,13 @@ def out_performacne(DF_Base_data):
                        
         return Performance_st
     
-    Performance_1y = specific_term_Perf(ADJ_MF_base,12*1) 
-    Performance_3y = specific_term_Perf(ADJ_MF_base,12*3) 
-    Performance_5y = specific_term_Perf(ADJ_MF_base,12*5) 
+    Performance_1y = specific_term_Perf(ADJ_MF_base,unit_year*1) 
+    Performance_3y = specific_term_Perf(ADJ_MF_base,unit_year*3) 
+    Performance_5y = specific_term_Perf(ADJ_MF_base,unit_year*5) 
 
     equity_curve = 100*((1+ADJ_MF_base).cumprod())
 
-    Roll_Max_12m = pd.rolling_max(equity_curve, window=12, min_periods=12)
+    Roll_Max_12m = pd.rolling_max(equity_curve, window=unit_year, min_periods=unit_year)
     Historical_Drawdown_12m = equity_curve/Roll_Max_12m - 1.0    
  
     sns.set_palette("Set1", len(equity_curve.columns))
@@ -393,7 +501,7 @@ def out_performacne(DF_Base_data):
     plt.show()
     
     plt.figure(figsize=(10, 5), dpi=80)
-    plt.title('Max DD (12-months rolling)')
+    plt.title('Max DD (250-dayhs rolling)')
     plt.plot(Historical_Drawdown_12m.index,Historical_Drawdown_12m)
     plt.legend(Historical_Drawdown_12m.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
     plt.suptitle('')
@@ -452,7 +560,9 @@ def out_performacne(DF_Base_data):
     
     return
 
-factor_index = adj_ret.drop('MAI-VOL-HDG',axis=1).copy()
+#factor_index = adj_ret.drop('MAI-VOL-HDG',axis=1).copy()
+
+factor_index = adj_ret.copy()
 
 bounds = [set_bounds for i in factor_index.columns]
 
@@ -488,6 +598,19 @@ DF_MS_weight_EMA_TargetRisk_6 = pd.DataFrame.from_dict(H_MS_weight_EMA_TargetRis
 DF_MS_weight_EMA_TargetRisk_6.columns = factor_index.columns 
 
 
+H_ERC_weight = calc_historical_RP_weight(factor_index,input_Look_back,\
+                   input_Min_Look_back)    
+DF_ERC_weight = pd.DataFrame.from_dict(H_ERC_weight).transpose()
+DF_ERC_weight.columns = factor_index.columns 
+
+Target_risk_p = 5
+H_ERC_leverage_weight = calc_historical_RP_leverage(factor_index,input_Look_back,\
+                   input_Min_Look_back)    
+DF_ERC_leverage_weight = pd.DataFrame.from_dict(H_ERC_leverage_weight).transpose()
+DF_ERC_leverage_weight.columns = factor_index.columns 
+
+
+
 def adj_weight(DF_ret,DF_weight):
     date_tmp = pd.DataFrame()
     date_tmp['tmp_date'] = DF_ret.ix[:,1]
@@ -497,13 +620,15 @@ def adj_weight(DF_ret,DF_weight):
     
     return pd.DataFrame(DF_weight)
 
-ret_for_port = adj_ret.drop('MAI-VOL-HDG',axis=1).copy()
+ret_for_port = adj_ret.copy()
 
 DF_MS_weight_EMA = adj_weight(ret_for_port,DF_MS_weight_EMA.resample("M").last()).dropna(axis=0)
 DF_MS_weight_EMA_TargetRisk_3 = adj_weight(ret_for_port,DF_MS_weight_EMA_TargetRisk_3.resample("M").last()).dropna(axis=0)
 DF_MS_weight_EMA_TargetRisk_4 = adj_weight(ret_for_port,DF_MS_weight_EMA_TargetRisk_4.resample("M").last()).dropna(axis=0)
 DF_MS_weight_EMA_TargetRisk_5 = adj_weight(ret_for_port,DF_MS_weight_EMA_TargetRisk_5.resample("M").last()).dropna(axis=0)
 DF_MS_weight_EMA_TargetRisk_6 = adj_weight(ret_for_port,DF_MS_weight_EMA_TargetRisk_6.resample("M").last()).dropna(axis=0)
+DF_ERC_weight = adj_weight(ret_for_port,DF_ERC_weight.resample("M").last()).dropna(axis=0)
+DF_ERC_leverage_weight = adj_weight(ret_for_port,DF_ERC_leverage_weight.resample("M").last()).dropna(axis=0)
 
 
 RP_ret_MS_EMA = pd.DataFrame(np.sum((ret_for_port*DF_MS_weight_EMA.shift(lag_trade-1)).dropna(axis=0),axis=1))
@@ -520,10 +645,19 @@ RP_ret_MS_weight_EMA_TargetRisk_5.columns = ['Max Sharpe(EMA,Target Risk=5%)']
 
 RP_ret_MS_weight_EMA_TargetRisk_6 = pd.DataFrame(np.sum((ret_for_port*DF_MS_weight_EMA_TargetRisk_6.shift(lag_trade-1)).dropna(axis=0),axis=1))
 RP_ret_MS_weight_EMA_TargetRisk_6.columns = ['Max Sharpe(EMA,Target Risk=6%)']
+
+RP_ret_ERC_weight = pd.DataFrame(np.sum((ret_for_port*DF_ERC_weight.shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_ERC_weight.columns = ['ERC']
+
+RP_ret_ERC_leverage_weight = pd.DataFrame(np.sum((ret_for_port*DF_ERC_leverage_weight.shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_ERC_leverage_weight.columns = ['ERC(Leverage)']
+
+
                                                   
 Portfolio_return = pd.concat([RP_ret_MS_EMA,RP_ret_MS_weight_EMA_TargetRisk_3,\
 RP_ret_MS_weight_EMA_TargetRisk_4,RP_ret_MS_weight_EMA_TargetRisk_5,\
-RP_ret_MS_weight_EMA_TargetRisk_6],axis=1).dropna()
+RP_ret_MS_weight_EMA_TargetRisk_6,RP_ret_ERC_weight,RP_ret_ERC_leverage_weight\
+],axis=1).dropna()
 
 
 out_performacne(Portfolio_return)
@@ -540,7 +674,7 @@ print("-------------------------------------------------------------------------
 print("------------------------------------------------------------------------------------------------")
 
 
-print("-----Equal Risk Contribution--------------------------------------------------------------------")
+print("-----Max Sharpe--------------------------------------------------------------------")
 
 # plt.subplot(7, 2, 1)
 DF_MS_weight_EMA.plot(y=DF_MS_weight_EMA.columns, kind='area', stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
@@ -616,6 +750,39 @@ plt.suptitle('')
 plt.show()
 
 
+print("-----Equal Risk Contribution--------------------------------------------------------------------")
+
+# plt.subplot(7, 2, 1)
+DF_ERC_weight[DF_ERC_weight>0].plot(y=DF_ERC_weight.columns, kind='area', stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_ERC_weight.columns,loc="upper cente.r",bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Equal Risk contribution')
+
+decomp = (ret_for_port*DF_ERC_weight.shift(lag_trade-1)).dropna(axis=0).cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Equal Risk contribution,Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+
+print("-----Equal Risk Contribution(Leverage)--------------------------------------------------------------------")
+
+plt.suptitle('Equal Risk contribution(Lev)')
+# plt.subplot(7, 2, 1)
+DF_ERC_leverage_weight[DF_ERC_leverage_weight>0].plot(y=DF_ERC_leverage_weight.columns, kind='area', stacked=True, alpha=0.7,ylim=[0,4.0],figsize=(10, 5))
+plt.legend(DF_ERC_leverage_weight.columns,loc="upper cente.r",bbox_to_anchor=(1.2,0.9)) 
+
+decomp = (ret_for_port*DF_ERC_leverage_weight.shift(lag_trade-1)).dropna(axis=0).cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Equal Risk contribution,Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+
+DF_ERC_weight.to_clipboard()
+
 def calc_TurnOver(DF_weight):
     TO = np.sum(abs(DF_weight-(DF_weight.shift(1)) ),axis=1).mean()*12
     # return print(str(float(np.round(TO*100,1)))+'%')
@@ -636,12 +803,13 @@ def calc_corr_comparison(DF_strategy,comparison_index):
     return 
 
 df_TO_data = pd.DataFrame({\
-'0_Equal_Risk_Contribution':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA.resample("M",how='last'))*100,1)))+'%'],\
-'1_ERC(EMA,Target Risk=3%)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_TargetRisk_3.resample("M",how='last'))*100,1)))+'%'],\
-'2_ERC(EMA,Target Risk=4%)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_TargetRisk_4.resample("M",how='last'))*100,1)))+'%'],\
-'3_ERC(EMA,Target Risk=5%)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_TargetRisk_5.resample("M",how='last'))*100,1)))+'%'],\
-'4_ERC(EMA,Target Risk=6%)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_TargetRisk_6.resample("M",how='last'))*100,1)))+'%'],\
-
+'0_Max Sharpe':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA.resample("M",how='last'))*100,1)))+'%'],\
+'1_Max Sharpe(EMA,Target Risk=3%)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_TargetRisk_3.resample("M",how='last'))*100,1)))+'%'],\
+'2_Max Sharpe(EMA,Target Risk=4%)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_TargetRisk_4.resample("M",how='last'))*100,1)))+'%'],\
+'3_Max Sharpe(EMA,Target Risk=5%)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_TargetRisk_5.resample("M",how='last'))*100,1)))+'%'],\
+'4_Max Sharpe(EMA,Target Risk=6%)':[str(float(np.round(calc_TurnOver(DF_MS_weight_EMA_TargetRisk_6.resample("M",how='last'))*100,1)))+'%'],\
+'5_ERC':[str(float(np.round(calc_TurnOver(DF_ERC_weight.resample("M",how='last'))*100,1)))+'%'],\
+'6_ERC(Lvrg)':[str(float(np.round(calc_TurnOver(DF_ERC_leverage_weight.resample("M",how='last'))*100,1)))+'%'],\
 })
 df_TO_data.index = ['Turn Over(12 month, One-way)']
 
@@ -657,6 +825,8 @@ plt.show()
 
 print("---Each Endex Performance---------------------------------------------------")
 out_performacne(adj_return(ret_for_port))
+out_performacne(ret_for_port)
+
 
 print("---Correlation--------------------------------------------------------------")
 Portfolio_value = 100*((1+Portfolio_return).cumprod())
