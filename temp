@@ -67,10 +67,8 @@ lag_trade = 2
 """
  Leverage constrain
 """
-max_leverage = 1.0
+max_leverage = 4.0
 max_long_leverage = max_leverage * 0.2
-
-max_leverage0 = 4.0
 
 G_LassoCV = covariance.GraphLassoCV(cv=5)
 
@@ -121,8 +119,10 @@ def target_risk_constraint(x) :
     global Target_risk_p
     variance = x.T @ covmat @ x
     target_risk = abs(float(Target_risk_p)/100 - np.sqrt(variance)*np.sqrt(unit_year))
-    return ( 0.0003 - target_risk)                    
-    
+    return ( 0.0003 - target_risk)        
+   
+def weight_upper_by_leverage(x) :  
+    return( weight_upper - x / (x.sum()) )    
 
 def RC(weight, covmat) :
     weight = np.array(weight)
@@ -182,7 +182,7 @@ def RiskParity_leverage(covmat) :
     x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
     constraints = ({'type': 'ineq', 'fun': weight_leverage_constraint},
                   {'type': 'ineq', 'fun': weight_longonly},
-                  {'type': 'ineq', 'fun': weight_leverage_longonly},
+                  {'type': 'ineq', 'fun': weight_upper_by_leverage},
                   {'type': 'ineq', 'fun': target_risk_constraint},
                   )
     options = {'ftol': 1e-20, 'maxiter': 800}
@@ -192,7 +192,7 @@ def RiskParity_leverage(covmat) :
                       constraints = constraints,
                       options = options)
     print(result.success)                                  
-    return(result.x)          
+    return(result.x)         
 
 
 
