@@ -841,3 +841,421 @@ calc_corr_comparison(base_return_W,W_comparison_index_ret)
 Portfolio_value = 100*((1+ret_data ).cumprod())
 Portfolio_value_M = Portfolio_value.resample("M",how='last')
 Portfolio_value_M = Portfolio_value_M/Portfolio_value_M.shift(1)-1
+
+
+
+
+
+
+
+"""
+robust
+"""
+
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Sun Feb 18 21:48:36 2018
+
+@author: katou
+"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Created on Mon Jan 22 22:02:00 2018
+
+@author: katou
+"""
+
+import pandas as pd
+import matplotlib.pyplot as plt
+from pandas.tools.plotting import table
+import seaborn as sns 
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from pandas.tools.plotting import table
+import seaborn as sns 
+from sklearn.decomposition import PCA
+import warnings;warnings.filterwarnings('ignore')
+from pandas import Series, DataFrame
+from scipy.optimize import minimize
+from scipy.cluster.hierarchy import ward, dendrogram
+from sklearn import  covariance
+
+
+
+inedx_data = pd.read_csv('/Users/**********************:.csv',index_col=0).dropna(axis=0)
+inedx_data.index = pd.to_datetime(inedx_data.index)
+
+
+ret_data = inedx_data.drop('Hedge',axis=1)
+
+
+
+
+unit_year = 250
+
+
+"""
+For Return Adjust
+"""
+Look_back = unit_year*3
+Min_Look_back = unit_year
+target_vol = 0.05
+
+"""
+For portforio construction
+"""
+input_Look_back = unit_year * 3
+input_Min_Look_back = unit_year
+
+
+"""
+ bounds for portforio construction
+"""
+set_bounds = (0.00, 1.0)
+
+
+
+"""
+ Trade(T+(x-1))
+"""
+lag_trade = 2
+
+"""
+ Leverage constrain
+"""
+max_leverage = 4.0
+max_long_leverage = max_leverage * 0.2
+
+G_LassoCV = covariance.GraphLassoCV(cv=5)
+
+adj_ret = ret_data.copy()
+
+
+def out_dendrogram_ward(df_ret,color_threshold=0.5):
+    """
+    color_threshold : 
+    """
+    ward_result = ward(df_ret.transpose())
+    plt.figure(figsize=(8,8), dpi=80)
+    plt.suptitle('Cluster Analysis(Dendrogram)')
+    dendrogram(ward_result, leaf_rotation=0,orientation='left', \
+                         labels=df_ret.columns,color_threshold=color_threshold)
+    plt.show()
+    return
+
+
+adj_ret_U = adj_ret[adj_ret>=0].fillna(0)
+adj_ret_D = adj_ret[adj_ret<0].fillna(0)
+
+out_dendrogram_ward(adj_ret_U/np.std(adj_ret_U))
+out_dendrogram_ward(adj_ret_D/np.std(adj_ret_D))
+out_dendrogram_ward(adj_ret/np.std(adj_ret))
+
+
+def out_corr(DF_ret):
+    CORR_Base_data = DF_ret.corr()   
+    plt.figure(figsize=(6, 3), dpi=80)
+    heatmap = sns.heatmap(CORR_Base_data,cbar=False,annot=True,cmap='Blues_r',fmt='.3f')
+    plt.suptitle('Correlation')
+    plt.show()
+    return
+    
+out_corr(adj_ret_U/np.std(adj_ret_U))
+out_corr(adj_ret_D/np.std(adj_ret_D))
+out_corr(adj_ret/np.std(adj_ret))
+
+
+
+    
+cr = np.array( adj_ret.corr())
+
+v = np.array(np.std(adj_ret))
+
+unit_mat = np.eye(len(adj_ret.columns))
+np.diag(cr, v)
+
+unit_mat.T @ cr @ unit_mat
+
+adj_ret.cov()
+
+
+np.fill_diagonal(unit_mat, v)
+
+
+
+def adj_return(input_ret):
+    input_ret.index = pd.to_datetime(input_ret.index)
+    a_ret = input_ret.copy()
+    rets = target_vol * a_ret/(np.std(a_ret, ddof=1)*np.sqrt(unit_year))
+    return rets
+
+def weight_sum_constraint(x) :
+    return(x.sum() - 1.0 )
+
+
+def weight_leverage_constraint(x) :
+    return( max_leverage - x.sum() )
+
+
+def weight_longonly(x) :
+    return(x)
+ 
+def RC(weight, covmat) :
+    weight = np.array(weight)
+    variance = weight.T @ covmat @ weight
+    sigma = variance ** 0.5
+    mrc = 1/sigma * (covmat @ weight)
+    rc = weight * mrc
+    rc = rc / rc.sum()
+    return(rc)
+    
+def RiskParity_objective(x) :
+    variance = x.T @ covmat @ x
+    sigma = variance ** 0.5
+    mrc = 1/sigma * (covmat @ x)
+    rc = x * mrc
+    a = np.reshape(rc, (len(rc), 1))
+    risk_diffs = a - a.T
+    sum_risk_diffs_squared = np.sum(np.square(np.ravel(risk_diffs)))
+    return (sum_risk_diffs_squared)   
+
+covmat = covmat_2
+def RiskParity(covmat) :
+    
+    x0 = np.repeat(1/covmat.shape[1], covmat.shape[1]) 
+    constraints = ({'type': 'eq', 'fun': weight_sum_constraint},
+                  {'type': 'ineq', 'fun': weight_longonly})
+    options = {'ftol': 1e-20, 'maxiter': 800}
+    result = minimize(fun = RiskParity_objective,
+                      x0 = x0,
+                      method = 'SLSQP',
+                      constraints = constraints,
+                      options = options)
+    # print(result.success)                                  
+    return(result.x)                     
+
+ret0[ret0<0].fillna(0).cov()
+
+
+
+covmat = pd.DataFrame()
+def calc_historical_RP_weight_2(df_ret,lookbak,min_lookbak):
+    global covmat, corr_r, vol_r, vol_mat
+    result_weight = {}
+    df_ret =     factor_index
+    d = 1000
+    lookbak = 750
+    for d in df_ret[min_lookbak:].resample("M").index:
+    # for d in df_ret.index:
+
+        # print('*---------------------'+str(d)+'*----------------------------')        
+        ret0 = df_ret[:d][-1*lookbak:]
+#        G_cov = G_LassoCV.fit(ret0.dropna(axis=0))
+        
+        vol_r = np.array(np.std(ret0[ret0<0].fillna(0)))
+        corr_r = np.array(ret0.corr())
+        vol_mat = np.eye(len(ret0.columns))
+        np.fill_diagonal(vol_mat, vol_r)
+        
+        covmat = pd.DataFrame(vol_mat.T @ corr_r @ vol_mat)
+        
+#        covmat = pd.DataFrame(G_cov.covariance_) * float((lookbak)/(lookbak-1))  
+        print(covmat)            
+        print(d)
+        
+        result_weight[d] = RiskParity(covmat)
+        # print(RiskParity(covmat)) 
+        
+    return result_weight
+
+
+
+
+   
+"""     
+-----------------------------------------------------------------------------------
+For Output Performance Summary
+-----------------------------------------------------------------------------------
+""" 
+
+def out_performacne(DF_Base_data):
+    ADJ_MF_base =  DF_Base_data.copy()
+
+    Vol_adj_ret = pd.DataFrame(np.std(ADJ_MF_base, ddof=1)*np.sqrt(unit_year)).transpose()
+    Vol_adj_ret.index = ['Volatility']
+
+    AunRet_adj_ret = pd.DataFrame(((1+ADJ_MF_base).cumprod()[-1:])**(unit_year/len(ADJ_MF_base.index))-1)
+    AunRet_adj_ret.index = ['Return']
+
+    AunRet_SR = pd.DataFrame(np.array(AunRet_adj_ret)/np.array(Vol_adj_ret))
+    AunRet_SR.index = ['Sharpe']
+    AunRet_SR.columns = AunRet_adj_ret.columns
+    
+    equity_curve = 100*((1+ADJ_MF_base).cumprod())
+       
+    Roll_Max = pd.rolling_max(equity_curve,window=len(equity_curve.index),  min_periods=1)
+    Historical_Drawdown = equity_curve/Roll_Max - 1.0      
+    Max_Drawdown = pd.rolling_min(Historical_Drawdown, window=len(equity_curve.index), min_periods=1)[-1:]
+    Max_Drawdown.index = ['MAX DD']
+    
+    Skew = pd.DataFrame(ADJ_MF_base.skew()).transpose()
+    Skew.index = ['Skew']
+    
+    Kurtosis = pd.DataFrame(ADJ_MF_base.kurtosis()).transpose()
+    Kurtosis.index = ['Kurtosis']
+    
+    Performance = pd.concat([AunRet_adj_ret,Vol_adj_ret,AunRet_SR,Max_Drawdown,Skew,Kurtosis],axis=0)
+
+    def specific_term_Perf(DF_ret,term): 
+        ADJ_MF_base_st = DF_ret[-1*term:]
+        Vol_adj_ret_st = pd.DataFrame(np.std(ADJ_MF_base_st, ddof=1)*np.sqrt(unit_year)).transpose()
+        Vol_adj_ret_st.index = ['Volatility']
+
+        AunRet_adj_ret_st = pd.DataFrame(((1+ADJ_MF_base_st).cumprod()[-1:])**(unit_year/len(ADJ_MF_base_st.index))-1)
+        AunRet_adj_ret_st.index = ['Return']
+
+        AunRet_SR_st = pd.DataFrame(np.array(AunRet_adj_ret_st)/np.array(Vol_adj_ret_st))
+        AunRet_SR_st.index = ['Sharpe']
+        AunRet_SR_st.columns = AunRet_adj_ret.columns
+
+        equity_curve_st = 100*((1+ADJ_MF_base_st).cumprod())
+       
+        Roll_Max_st = pd.rolling_max(equity_curve_st,window=len(equity_curve.index),  min_periods=1)
+        Historical_Drawdown_st = equity_curve_st/Roll_Max_st - 1.0      
+        Max_Drawdown_st = pd.rolling_min(Historical_Drawdown_st, window=len(equity_curve.index), min_periods=1)[-1:]
+        Max_Drawdown_st.index = ['MAX DD']   
+        
+        Performance_st = pd.concat([AunRet_adj_ret_st,Vol_adj_ret_st,AunRet_SR_st,Max_Drawdown],axis=0)      
+                       
+        return Performance_st
+    
+    Performance_1y = specific_term_Perf(ADJ_MF_base,unit_year*1) 
+    Performance_3y = specific_term_Perf(ADJ_MF_base,unit_year*3) 
+    Performance_5y = specific_term_Perf(ADJ_MF_base,unit_year*5) 
+
+    equity_curve = 100*((1+ADJ_MF_base).cumprod())
+
+    Roll_Max_12m = pd.rolling_max(equity_curve, window=unit_year, min_periods=unit_year)
+    Historical_Drawdown_12m = equity_curve/Roll_Max_12m - 1.0    
+ 
+    sns.set_palette("Set1", len(equity_curve.columns))
+
+    plt.figure(figsize=(10, 5), dpi=80)
+    plt.title('Equity Curve')
+    plt.plot(equity_curve.index,equity_curve)
+    plt.legend(equity_curve.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+    plt.suptitle('')
+    plt.show()
+    
+    plt.figure(figsize=(10, 5), dpi=80)
+    plt.title('Max DD (250-dayhs rolling)')
+    plt.plot(Historical_Drawdown_12m.index,Historical_Drawdown_12m)
+    plt.legend(Historical_Drawdown_12m.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+    plt.suptitle('')
+    plt.show()    
+    
+
+    print('----------------Statistics(Whole Period)---------------------------')    
+    ax1 = plt.subplot(111)
+    plt.axis('off')
+    tbl = table(ax1, np.round(Performance.transpose(),4), loc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    plt.show() 
+    
+    print('----------------Statistics(1 year)---------------------------')
+    ax1 = plt.subplot(111)      
+    plt.axis('off') 
+    tbl = table(ax1, np.round(Performance_1y.transpose(),4), loc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    plt.show() 
+
+    print('----------------Statistics(3 year)---------------------------')    
+    ax1 = plt.subplot(111)
+    plt.axis('off')   
+    tbl = table(ax1, np.round(Performance_3y.transpose(),4), loc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    plt.show() 
+
+    print('----------------Statistics(5 year)---------------------------') 
+    ax1 = plt.subplot(111)
+    plt.axis('off')  
+    tbl = table(ax1, np.round(Performance_5y.transpose(),4), loc='center')
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(10)
+    plt.show() 
+            
+    
+    CORR_Base_data = ADJ_MF_base.corr()   
+    plt.figure(figsize=(6, 3), dpi=80)
+    heatmap = sns.heatmap(CORR_Base_data,cbar=False,annot=True,cmap='Blues_r',fmt='.3f')
+    plt.suptitle('Correlation')
+    plt.show()
+   
+
+
+    ret_a = equity_curve.resample("A",how='last').pct_change()
+    ret_a['year'] = (ret_a.index).year
+    ret_a.index = ret_a['year']
+
+    ret_a[DF_Base_data.columns].plot(kind='bar',alpha=0.8,figsize=(11, 5));
+    plt.legend(loc=(1.0,0.4))
+    plt.suptitle('Calendar Year Return')
+    plt.show()
+    
+    return
+
+#factor_index = adj_ret.drop('MAI-VOL-HDG',axis=1).copy()
+
+factor_index = adj_ret.copy()
+
+
+H_ERC_weight = calc_historical_RP_weight_2(factor_index,input_Look_back,\
+                   input_Min_Look_back)    
+DF_ERC_weight = pd.DataFrame.from_dict(H_ERC_weight).transpose()
+DF_ERC_weight.columns = factor_index.columns 
+
+
+
+
+def adj_weight(DF_ret,DF_weight):
+    date_tmp = pd.DataFrame()
+    date_tmp['tmp_date'] = DF_ret.ix[:,1]
+    
+    DF_weight = pd.concat([date_tmp,DF_weight],axis=1).fillna(method='ffill').drop('tmp_date',axis=1)
+    DF_weight = pd.concat([date_tmp,DF_weight],axis=1,join_axes=[date_tmp.index]).drop('tmp_date',axis=1)
+    
+    return pd.DataFrame(DF_weight)
+
+ret_for_port = adj_ret.copy()
+
+DF_ERC_weight = adj_weight(ret_for_port,DF_ERC_weight.resample("M").last()).dropna(axis=0)
+
+
+RP_ret_ERC_weight = pd.DataFrame(np.sum((ret_for_port*DF_ERC_weight.shift(lag_trade-1)).dropna(axis=0),axis=1))
+RP_ret_ERC_weight.columns = ['ERC']
+
+out_performacne(RP_ret_ERC_weight)
+
+
+
+# plt.subplot(7, 2, 1)
+DF_ERC_weight[DF_ERC_weight>0].plot(y=DF_ERC_weight.columns, kind='area', stacked=True, alpha=0.7,ylim=[0,1.0],figsize=(10, 5))
+plt.legend(DF_ERC_weight.columns,loc="upper cente.r",bbox_to_anchor=(1.2,0.9)) 
+plt.suptitle('Equal Risk contribution')
+
+decomp = (ret_for_port*DF_ERC_weight.shift(lag_trade-1)).dropna(axis=0).cumsum().dropna(axis=0)
+plt.figure(figsize=(9.5, 5), dpi=80)
+plt.title('Decomposition(Equal Risk contribution,Cumulative Sum)')
+plt.plot(decomp.index,decomp)
+plt.legend(decomp.columns,loc="upper center",bbox_to_anchor=(1.2,0.8)) 
+plt.suptitle('')
+plt.show()
+    
+
+
