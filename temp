@@ -1058,7 +1058,7 @@ def calc_historical_RP_weight_2(df_ret,lookbak,min_lookbak):
         corr_r = np.array(ret0.corr())
         
 #        G_cov = G_LassoCV.fit(ret0[ret0<0].fillna(0)))        
-#        corr_r = np.array(G_cov.precision_ )
+#        precision_mat = np.array(G_cov.precision_ )
 
         vol_mat = np.eye(len(ret0.columns))
         np.fill_diagonal(vol_mat, vol_r)
