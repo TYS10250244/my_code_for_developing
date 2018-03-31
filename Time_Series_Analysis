@@ -15,11 +15,11 @@ from statsmodels.tsa import stattools
 from statsmodels.tsa.stattools import grangercausalitytests
 
 
-def ADF_test(input_data):
-    res_ctt = stattools.adfuller(ret_data['TPX Index'][-120:], regression="ctt") # トレンド項あり（２次）、定数項あり
-    res_ct = stattools.adfuller(ret_data['TPX Index'][-120:], regression="ct") # トレンド項あり（１次）、定数項あり
-    res_c = stattools.adfuller(ret_data['TPX Index'][-120:], regression="c") # トレンド項なし、定数項あり
-    res_nc = stattools.adfuller(ret_data['TPX Index'][-120:], regression="nc") # トレンド項なし、定数項なし
+def ADF_test(input_data,x,window):
+    res_ctt = stattools.adfuller(ret_data[x][-1*window:], regression="ctt") # トレンド項あり（２次）、定数項あり
+    res_ct = stattools.adfuller(ret_data[x][-1*window:], regression="ct") # トレンド項あり（１次）、定数項あり
+    res_c = stattools.adfuller(ret_data[x][-1*window:], regression="c") # トレンド項なし、定数項あり
+    res_nc = stattools.adfuller(ret_data[x][-1*window:], regression="nc") # トレンド項なし、定数項なし
     print("------cconstant only ---------------------------------------------")
     print(res_c)
     print("------no constant, no tren--------------------")
