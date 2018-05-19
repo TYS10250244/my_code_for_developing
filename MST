@@ -1,0 +1,38 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Memo
+circular_layout(G[, dim, scale])	Position nodes on a circle.
+random_layout(G[, dim])	Position nodes uniformly at random in the unit square.
+shell_layout(G[, nlist, dim, scale])	Position nodes in concentric circles.
+spring_layout(G[, dim, k, pos, fixed, ...])	Position nodes using Fruchterman-Reingold force-directed algorithm.
+spectral_layout(G[, dim, weight, scale])	Position nodes using the eigenvectors of the graph Laplacian.
+"""
+
+import pandas as pd
+import networkx as nx
+import matplotlib.pylab as plt
+from scipy.sparse import csr_matrix 
+from scipy.sparse.csgraph import minimum_spanning_tree 
+import numpy as np
+
+ret_data = pd.read_csv(,index_col=0).dropna(axis=0)
+ret_data.index = pd.to_datetime(ret_data.index)
+ret_data = 0.5*ret_data/(ret_data.std()*np.sqrt(252))
+
+#M = csr_matrix(ret_data.corr())
+M = csr_matrix(2*np.sqrt(1-ret_data.corr()))
+
+M = minimum_spanning_tree(M)
+G = nx.Graph(M)
+
+plt.figure(figsize=(10,10))
+pos = nx.spring_layout(G)
+nx.draw_networkx(G,pos, with_labels = False,node_color = 'b')
+for k in pos:
+    value = pos[k]
+    value[0]
+    plt.text(value[0],value[1], [ret_data.columns.transpose()[k]])
+plt.axis("off")
+plt.show()
+
