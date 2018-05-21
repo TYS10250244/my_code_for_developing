@@ -9,30 +9,30 @@ spring_layout(G[, dim, k, pos, fixed, ...])	Position nodes using Fruchterman-Rei
 spectral_layout(G[, dim, weight, scale])	Position nodes using the eigenvectors of the graph Laplacian.
 """
 
-import pandas as pd
-import networkx as nx
-import matplotlib.pylab as plt
-from scipy.sparse import csr_matrix 
-from scipy.sparse.csgraph import minimum_spanning_tree 
-import numpy as np
+def Out_MST(matrix,label_name,node_color = 'royalblue',node_size=300,savefig=None):
+    """
+    Create Heat map (useful for correlation matrix)
+    
+    Parameters
+    ----------
+    matrix: array_like or sparse matrix, 2 dimensions
+    label_name: data label according to matrix contents
+    savefig:
+     """    
+    MST = minimum_spanning_tree(matrix)
+    G = nx.Graph(MST)
+    
+    plt.figure(figsize=(10,10))
+    pos = nx.spring_layout(G)
+    nx.draw_networkx(G,pos, with_labels = False,node_color = node_color,\
+                                                         node_size=node_size)
+    for k in pos:
+        value = pos[k]
+        plt.text(value[0],value[1], label_name[k])
+    plt.axis("off")
+    plt.show()
+    if savefig != None:
+        plt.savefig(savefig)
+    plt.show()  
 
-ret_data = pd.read_csv(,index_col=0).dropna(axis=0)
-ret_data.index = pd.to_datetime(ret_data.index)
-ret_data = 0.5*ret_data/(ret_data.std()*np.sqrt(252))
-
-#M = csr_matrix(ret_data.corr())
-M = csr_matrix(2*np.sqrt(1-ret_data.corr()))
-
-M = minimum_spanning_tree(M)
-G = nx.Graph(M)
-
-plt.figure(figsize=(10,10))
-pos = nx.spring_layout(G)
-nx.draw_networkx(G,pos, with_labels = False,node_color = 'b')
-for k in pos:
-    value = pos[k]
-    value[0]
-    plt.text(value[0],value[1], [ret_data.columns.transpose()[k]])
-plt.axis("off")
-plt.show()
-
+    return 
